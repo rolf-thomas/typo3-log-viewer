@@ -1,5 +1,6 @@
 use crate::loader::{format_file_size, LoadResult};
 use crate::model::{LogEntry, LogFilter, LogLevel};
+use crate::parser::extract_json_from_message;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -327,12 +328,37 @@ fn render_detail(f: &mut Frame, app: &App, area: Rect) {
         Line::from(""),
     ];
 
-    // Nachricht hinzufügen
-    for msg_line in message.lines() {
-        lines.push(Line::from(msg_line.to_string()));
+    // Prüfe ob JSON in der Nachricht enthalten ist
+    if let Some((text_part, json_formatted)) = extract_json_from_message(&message) {
+        // Text vor dem JSON anzeigen
+        if !text_part.is_empty() {
+            for text_line in text_part.lines() {
+                lines.push(Line::from(text_line.to_string()));
+            }
+            lines.push(Line::from(""));
+        }
+
+        // JSON formatiert anzeigen
+        lines.push(Line::from(Span::styled(
+            "JSON:",
+            Style::default().add_modifier(Modifier::BOLD).fg(Color::Cyan),
+        )));
+        lines.push(Line::from(""));
+
+        for json_line in json_formatted.lines() {
+            lines.push(Line::from(Span::styled(
+                format!("  {}", json_line),
+                Style::default().fg(Color::Cyan),
+            )));
+        }
+    } else {
+        // Normale Nachricht ohne JSON
+        for msg_line in message.lines() {
+            lines.push(Line::from(msg_line.to_string()));
+        }
     }
 
-    // Extra-Daten (z.B. JSON)
+    // Extra-Daten (mehrzeilige Zusatzdaten aus dem Log)
     if let Some(formatted) = extra_data {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
@@ -341,11 +367,22 @@ fn render_detail(f: &mut Frame, app: &App, area: Rect) {
         )));
         lines.push(Line::from(""));
 
-        for data_line in formatted.lines() {
-            lines.push(Line::from(Span::styled(
-                data_line.to_string(),
-                Style::default().fg(Color::Cyan),
-            )));
+        // Prüfe ob extra_data JSON ist
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&formatted) {
+            let pretty = serde_json::to_string_pretty(&json).unwrap_or(formatted.clone());
+            for data_line in pretty.lines() {
+                lines.push(Line::from(Span::styled(
+                    format!("  {}", data_line),
+                    Style::default().fg(Color::Green),
+                )));
+            }
+        } else {
+            for data_line in formatted.lines() {
+                lines.push(Line::from(Span::styled(
+                    data_line.to_string(),
+                    Style::default().fg(Color::Green),
+                )));
+            }
         }
     }
 
