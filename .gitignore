@@ -2,3 +2,4 @@
 /target
 /var
 !/var/log/.gitkeep
+/dist

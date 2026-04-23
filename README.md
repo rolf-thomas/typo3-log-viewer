@@ -213,6 +213,70 @@ sudo chmod +x /usr/local/bin/typo3-log-viewer
 typo3-log-viewer /var/log/typo3/
 ```
 
+## Homebrew-Distribution
+
+Das Tool kann über einen eigenen Homebrew-Tap verteilt werden — für macOS (arm64 + Intel) und Linux (über Linuxbrew). Sowohl öffentliche als auch **private Taps** werden unterstützt.
+
+### Einmaliges Setup: Tap-Repository anlegen
+
+Homebrew-Taps müssen den Namen `homebrew-<name>` tragen. Beispiel:
+
+```bash
+gh repo create rolf-thomas/homebrew-tools --public
+```
+
+Struktur im Tap-Repo:
+
+```
+homebrew-tools/
+└── Formula/
+    └── typo3-log-viewer.rb
+```
+
+Kopiere `Formula/typo3-log-viewer.rb` aus diesem Projekt ins Tap-Repo. Die URLs sind bereits auf `rolf-thomas` gesetzt.
+
+### Release-Workflow
+
+Für jedes neue Release:
+
+```bash
+# 1. Alle Binaries bauen
+./build.sh                              # macOS arm64 (signiert)
+cargo build --release --target x86_64-apple-darwin   # macOS Intel
+codesign --force --deep -s - target/x86_64-apple-darwin/release/typo3-log-viewer
+./build-linux.sh x86_64-unknown-linux-musl aarch64-unknown-linux-gnu
+
+# 2. Release-Tarballs + SHA256 erzeugen
+./release.sh
+
+# 3. GitHub Release anlegen und Tarballs hochladen
+gh release create v0.1.0 --title "v0.1.0" dist/*.tar.gz
+
+# 4. Formel aktualisieren (Version + SHA256 aus dist/formula-snippet.rb)
+# 5. Im Tap-Repo committen und pushen
+```
+
+### Installation durch Nutzer
+
+```bash
+brew tap rolf-thomas/tools
+brew install typo3-log-viewer
+```
+
+Update mit `brew update && brew upgrade typo3-log-viewer`.
+
+> Hinweis: Falls du später auf einen privaten Tap wechseln möchtest, brauchst du einen `HOMEBREW_GITHUB_API_TOKEN` (mit Scope `repo`) oder SSH-Zugriff auf das Repo.
+
+### Selbst-gehosteter Tap (Alternative)
+
+Falls du später auf GitLab/Gitea wechselst:
+
+```bash
+brew tap rolf-thomas/tools https://gitlab.example.com/rolf-thomas/homebrew-tools.git
+```
+
+Die Release-Tarballs können auch auf einem beliebigen HTTPS-Server liegen (S3, interner Webserver). In der Formel wird einfach die URL-Basis angepasst.
+
 ## Unterstütztes Log-Format
 
 Der Viewer erwartet das Standard-TYPO3-Logformat:
