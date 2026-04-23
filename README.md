@@ -112,6 +112,107 @@ cd typo3-log-viewer
 ./build.sh
 ```
 
+## Linux / Debian
+
+Das Tool läuft auch unter Linux (Debian, Ubuntu, Fedora, Arch, etc.). macOS-Binaries funktionieren **nicht** direkt — es muss eine Linux-Binary gebaut werden. Es gibt zwei Wege:
+
+### Variante A: Native Build auf Debian (einfachste Lösung)
+
+Auf dem Debian-System Rust installieren und bauen:
+
+```bash
+# Rust installieren
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# Projekt bauen
+git clone <repo-url>
+cd typo3-log-viewer
+cargo build --release
+
+# Binary liegt dann unter:
+./target/release/typo3-log-viewer
+```
+
+Systemabhängigkeiten auf Debian/Ubuntu (falls noch nicht vorhanden):
+
+```bash
+sudo apt install build-essential pkg-config
+```
+
+### Variante B: Cross-Compilation vom Mac aus
+
+Für Distribution mehrerer Architekturen ohne Zugriff auf ein Debian-System.
+
+Das Script `build-linux.sh` erkennt automatisch, welches Backend verfügbar ist. Es gibt zwei Optionen — **Zig ist empfohlen** (kein Docker nötig, schneller, kleinerer Footprint):
+
+#### Option B1: Zig als Cross-Linker (empfohlen)
+
+```bash
+brew install zig
+cargo install cargo-zigbuild
+./build-linux.sh
+```
+
+Vorteile:
+- Keine Docker-Installation nötig
+- Schnellere Builds (direkt, ohne Container)
+- Funktioniert auch in CI/CD ohne Privileged-Mode
+
+#### Option B2: cross mit Docker
+
+Voraussetzungen:
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) installiert und gestartet
+- `cross`-Tool:
+  ```bash
+  cargo install cross --git https://github.com/cross-rs/cross
+  ```
+
+```bash
+./build-linux.sh
+```
+
+Das Script baut für zwei Targets:
+
+| Target | Plattform |
+|--------|-----------|
+| `x86_64-unknown-linux-gnu` | Standard-PCs, Server, Intel/AMD |
+| `aarch64-unknown-linux-gnu` | ARM-Geräte, Raspberry Pi 4/5, ARM-Server |
+
+Ergebnis:
+
+```
+target/x86_64-unknown-linux-gnu/release/typo3-log-viewer
+target/aarch64-unknown-linux-gnu/release/typo3-log-viewer
+```
+
+Einzelnes Target bauen:
+
+```bash
+./build-linux.sh x86_64-unknown-linux-gnu
+```
+
+### Kompatibilität
+
+Die gebauten Linux-Binaries sind **dynamisch gegen glibc gelinkt**. Sie funktionieren auf Debian/Ubuntu-Versionen, deren glibc mindestens so aktuell ist wie die des Build-Systems. `cross` verwendet standardmäßig ein ausreichend altes Base-Image (Ubuntu mit glibc 2.17/2.27), sodass aktuelle Debian-Systeme (Bullseye/Bookworm und neuer) problemlos unterstützt werden.
+
+Für maximale Portabilität (z.B. Alpine Linux, statisch gelinkte Binaries) kann `x86_64-unknown-linux-musl` verwendet werden:
+
+```bash
+rustup target add x86_64-unknown-linux-musl
+./build-linux.sh x86_64-unknown-linux-musl
+```
+
+### Installation auf Debian
+
+```bash
+# Binary kopieren
+sudo cp typo3-log-viewer /usr/local/bin/
+sudo chmod +x /usr/local/bin/typo3-log-viewer
+
+# Aufruf
+typo3-log-viewer /var/log/typo3/
+```
+
 ## Unterstütztes Log-Format
 
 Der Viewer erwartet das Standard-TYPO3-Logformat:
