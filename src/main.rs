@@ -28,6 +28,7 @@ fn print_usage() {
     eprintln!("Verwendung:");
     eprintln!("  typo3-log-viewer <datei.log>     Öffnet eine spezifische Log-Datei");
     eprintln!("  typo3-log-viewer <verzeichnis>   Listet alle .log-Dateien im Verzeichnis");
+    eprintln!("  typo3-log-viewer                 Nutzt ./var/log/ falls vorhanden");
     eprintln!();
     eprintln!("Tastenkürzel:");
     eprintln!("  ↑/↓, j/k      Navigation");
@@ -182,20 +183,27 @@ fn render_file_selector(f: &mut Frame, files: &[FileInfo], list_state: &mut List
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
-    if args.len() < 2 {
-        print_usage();
-        process::exit(1);
-    }
-
-    let path_arg = &args[1];
-
     // Hilfe anzeigen
-    if path_arg == "-h" || path_arg == "--help" {
+    if args.len() >= 2 && (args[1] == "-h" || args[1] == "--help") {
         print_usage();
         return;
     }
 
-    let path = Path::new(path_arg);
+    // Pfad aus Argumenten oder Fallback auf ./var/log/
+    let path_arg: String = if args.len() >= 2 {
+        args[1].clone()
+    } else {
+        let default = Path::new("./var/log");
+        if default.is_dir() {
+            eprintln!("Kein Pfad angegeben — verwende ./var/log/");
+            "./var/log".to_string()
+        } else {
+            print_usage();
+            process::exit(1);
+        }
+    };
+
+    let path = Path::new(&path_arg);
 
     // Prüfe ob Pfad existiert
     if !path.exists() {
