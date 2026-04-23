@@ -76,9 +76,9 @@ impl App {
             should_quit: false,
         };
 
-        // Wähle ersten Eintrag
+        // Wähle den letzten (neuesten) Eintrag
         if !app.filtered_indices.is_empty() {
-            app.list_state.select(Some(0));
+            app.list_state.select(Some(app.filtered_indices.len() - 1));
         }
 
         app
