@@ -1,5 +1,5 @@
 use crate::loader::{format_file_size, LoadResult};
-use crate::model::{parse_date_input, LogEntry, LogFilter, LogLevel};
+use crate::model::{message_prefix, parse_date_input, LogEntry, LogFilter, LogLevel};
 use crate::parser::extract_json_from_message;
 use chrono::{Datelike, Local, NaiveDate};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
@@ -218,6 +218,18 @@ impl App {
         self.set_date_range(Some(from), Some(today));
     }
 
+    /// Fokussiert auf gleiche Nachrichten (selber Präfix vor JSON)
+    pub fn set_message_focus(&mut self) {
+        if let Some(entry) = self.selected_entry() {
+            let prefix = message_prefix(&entry.message);
+            if !prefix.is_empty() {
+                self.filter.message_prefix = Some(prefix);
+                self.apply_filter();
+                self.list_state.select(Some(0));
+            }
+        }
+    }
+
     /// Fokussiert auf die Request-ID des aktuell gewählten Eintrags
     pub fn set_request_focus(&mut self) {
         if let Some(req_id) = self.selected_entry().and_then(|e| e.request_id.clone()) {
@@ -332,6 +344,13 @@ fn render_list(f: &mut Frame, app: &mut App, area: Rect) {
         format!(
             " [Request-Fokus: {} — {} Einträge]",
             req_id,
+            app.filtered_indices.len()
+        )
+    } else if let Some(prefix) = &app.filter.message_prefix {
+        let short = if prefix.len() > 40 { format!("{}…", &prefix[..40]) } else { prefix.clone() };
+        format!(
+            " [Gleiche: \"{}\" — {} Einträge]",
+            short,
             app.filtered_indices.len()
         )
     } else if app.filter.is_active() {
@@ -548,6 +567,7 @@ fn render_help(f: &mut Frame, area: Rect) {
         Line::from(""),
         Line::from(Span::styled("Filter:", Style::default().add_modifier(Modifier::BOLD))),
         Line::from("  f          Request-Fokus (alle Einträge dieser Request-ID)"),
+        Line::from("  s          Selbe Lognachricht anzeigen"),
         Line::from("  d          Datumsfilter-Menü"),
         Line::from("  /          Textsuche"),
         Line::from("  1-4        Level-Filter (1=Error, 2=Warning, 3=Info, 4=Debug)"),
@@ -659,7 +679,7 @@ fn render_statusbar(f: &mut Frame, app: &App, area: Rect) {
         let pos = app.list_state.selected().map(|s| s + 1).unwrap_or(0);
         let total = app.filtered_indices.len();
         format!(
-            " {}/{} | ↑↓:Nav | Enter:Details | f:Fokus | d:Datum | /:Suche | 1-4:Level | 0:Reset | ?:Hilfe | q:Quit",
+            " {}/{} | ↑↓:Nav | Enter:Details | f:Fokus | s:Selbe | d:Datum | /:Suche | 1-4:Level | 0:Reset | ?:Hilfe | q:Quit",
             pos, total
         )
     };
@@ -904,6 +924,9 @@ pub fn handle_input(app: &mut App) -> io::Result<()> {
                 }
                 KeyCode::Home | KeyCode::Char('g') => {
                     app.go_to_start();
+                }
+                KeyCode::Char('s') => {
+                    app.set_message_focus();
                 }
                 KeyCode::End => {
                     app.go_to_end();

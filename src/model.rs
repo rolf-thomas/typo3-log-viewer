@@ -126,6 +126,8 @@ pub struct LogFilter {
     pub component_filter: Option<String>,
     /// Fokus auf eine einzelne Request-ID
     pub request_id: Option<String>,
+    /// Fokus auf gleiche Nachricht (Präfix vor JSON)
+    pub message_prefix: Option<String>,
     /// Datum von (inkl. 00:00:00)
     pub date_from: Option<NaiveDate>,
     /// Datum bis (inkl. 23:59:59)
@@ -172,6 +174,13 @@ impl LogFilter {
             }
         }
 
+        // Nachrichten-Präfix-Fokus
+        if let Some(prefix) = &self.message_prefix {
+            if message_prefix(&entry.message) != *prefix {
+                return false;
+            }
+        }
+
         // Datumsbereich
         let entry_date = entry.timestamp.date_naive();
         if let Some(from) = self.date_from {
@@ -193,6 +202,7 @@ impl LogFilter {
             || self.search_text.is_some()
             || self.component_filter.is_some()
             || self.request_id.is_some()
+            || self.message_prefix.is_some()
             || self.date_from.is_some()
             || self.date_to.is_some()
     }
@@ -202,6 +212,7 @@ impl LogFilter {
         self.search_text = None;
         self.component_filter = None;
         self.request_id = None;
+        self.message_prefix = None;
         self.date_from = None;
         self.date_to = None;
     }
@@ -216,6 +227,19 @@ impl LogFilter {
             (None, None) => None,
         }
     }
+}
+
+/// Extrahiert den stabilen Nachricht-Präfix (vor dem ersten JSON-Block)
+/// z.B. "Matched /auth/callback route" aus "Matched /auth/callback route - {…}"
+pub fn message_prefix(message: &str) -> String {
+    // Trenne am ersten " - {" oder " - [" (JSON folgt)
+    for sep in [" - {", " - ["] {
+        if let Some(pos) = message.find(sep) {
+            return message[..pos].trim().to_string();
+        }
+    }
+    // Kein JSON-Separator: ganze Nachricht (getrimmt)
+    message.trim().to_string()
 }
 
 /// Parst ein Datum im Format TT.MM.JJJJ oder JJJJ-MM-TT
