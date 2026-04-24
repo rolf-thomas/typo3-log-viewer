@@ -178,6 +178,45 @@ impl App {
         self.filter.clear();
         self.apply_filter();
     }
+
+    /// Prüft, ob sich die Datei geändert hat, und lädt sie neu.
+    /// Die aktuelle Selektion wird per line_number wiederhergestellt,
+    /// sodass neue Einträge die Auswahl nicht verändern.
+    pub fn reload_if_changed(&mut self) -> io::Result<bool> {
+        let metadata = match std::fs::metadata(&self.file_path) {
+            Ok(m) => m,
+            Err(_) => return Ok(false), // Datei kurzzeitig nicht verfügbar — nächster Tick
+        };
+        let current_size = metadata.len();
+
+        if current_size == self.file_size {
+            return Ok(false);
+        }
+
+        // Aktuelle Auswahl per stabilem Kriterium (line_number) merken
+        let selected_line_number = self.selected_entry().map(|e| e.line_number);
+
+        // Datei neu laden und parsen
+        let content = std::fs::read_to_string(&self.file_path)?;
+        self.entries = crate::parser::parse_log_content(&content);
+        self.file_size = current_size;
+        self.apply_filter();
+
+        // Auswahl wiederherstellen
+        if let Some(line_num) = selected_line_number {
+            if let Some(pos) = self
+                .filtered_indices
+                .iter()
+                .position(|&i| self.entries[i].line_number == line_num)
+            {
+                self.list_state.select(Some(pos));
+            }
+            // Falls die alte Zeile nicht mehr existiert (z.B. Rotation),
+            // behält apply_filter eine sinnvolle Position bei.
+        }
+
+        Ok(true)
+    }
 }
 
 /// Farbe für Log-Level
@@ -703,9 +742,18 @@ pub fn run_app<B: ratatui::backend::Backend>(
     terminal: &mut ratatui::Terminal<B>,
     mut app: App,
 ) -> io::Result<()> {
+    let mut last_reload_check = std::time::Instant::now();
+    let reload_interval = std::time::Duration::from_millis(500);
+
     loop {
         terminal.draw(|f| render(f, &mut app))?;
         handle_input(&mut app)?;
+
+        // Periodisch prüfen, ob die Datei sich geändert hat (Live-Tail)
+        if last_reload_check.elapsed() >= reload_interval {
+            let _ = app.reload_if_changed();
+            last_reload_check = std::time::Instant::now();
+        }
 
         if app.should_quit {
             break;
