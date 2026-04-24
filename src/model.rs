@@ -1,4 +1,4 @@
-use chrono::{DateTime, FixedOffset};
+use chrono::{DateTime, FixedOffset, NaiveDate};
 use std::fmt;
 
 /// Log-Level entsprechend TYPO3 Logging
@@ -126,6 +126,10 @@ pub struct LogFilter {
     pub component_filter: Option<String>,
     /// Fokus auf eine einzelne Request-ID
     pub request_id: Option<String>,
+    /// Datum von (inkl. 00:00:00)
+    pub date_from: Option<NaiveDate>,
+    /// Datum bis (inkl. 23:59:59)
+    pub date_to: Option<NaiveDate>,
 }
 
 impl LogFilter {
@@ -168,6 +172,19 @@ impl LogFilter {
             }
         }
 
+        // Datumsbereich
+        let entry_date = entry.timestamp.date_naive();
+        if let Some(from) = self.date_from {
+            if entry_date < from {
+                return false;
+            }
+        }
+        if let Some(to) = self.date_to {
+            if entry_date > to {
+                return false;
+            }
+        }
+
         true
     }
 
@@ -176,6 +193,8 @@ impl LogFilter {
             || self.search_text.is_some()
             || self.component_filter.is_some()
             || self.request_id.is_some()
+            || self.date_from.is_some()
+            || self.date_to.is_some()
     }
 
     pub fn clear(&mut self) {
@@ -183,5 +202,32 @@ impl LogFilter {
         self.search_text = None;
         self.component_filter = None;
         self.request_id = None;
+        self.date_from = None;
+        self.date_to = None;
     }
+
+    /// Beschreibung des aktiven Datumsfilters für die Anzeige
+    pub fn date_label(&self) -> Option<String> {
+        match (self.date_from, self.date_to) {
+            (Some(f), Some(t)) if f == t => Some(format!("{}", f.format("%d.%m.%Y"))),
+            (Some(f), Some(t)) => Some(format!("{} – {}", f.format("%d.%m.%Y"), t.format("%d.%m.%Y"))),
+            (Some(f), None) => Some(format!("ab {}", f.format("%d.%m.%Y"))),
+            (None, Some(t)) => Some(format!("bis {}", t.format("%d.%m.%Y"))),
+            (None, None) => None,
+        }
+    }
+}
+
+/// Parst ein Datum im Format TT.MM.JJJJ oder JJJJ-MM-TT
+pub fn parse_date_input(s: &str) -> Option<NaiveDate> {
+    let s = s.trim();
+    // TT.MM.JJJJ
+    if let Ok(d) = NaiveDate::parse_from_str(s, "%d.%m.%Y") {
+        return Some(d);
+    }
+    // JJJJ-MM-TT
+    if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+        return Some(d);
+    }
+    None
 }

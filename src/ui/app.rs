@@ -1,6 +1,7 @@
 use crate::loader::{format_file_size, LoadResult};
-use crate::model::{LogEntry, LogFilter, LogLevel};
+use crate::model::{parse_date_input, LogEntry, LogFilter, LogLevel};
 use crate::parser::extract_json_from_message;
+use chrono::{Datelike, Local, NaiveDate};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -23,6 +24,7 @@ pub enum AppView {
     #[allow(dead_code)]
     Filter,
     Help,
+    DateMenu,
 }
 
 /// Input-Modus für Filter
@@ -34,6 +36,8 @@ pub enum FilterMode {
     Level,
     #[allow(dead_code)]
     Component,
+    DateFrom,
+    DateTo,
 }
 
 /// Haupt-App-Zustand
@@ -63,6 +67,8 @@ pub struct App {
     pub should_go_back: bool,
     /// Dateiauswahl war verfügbar (Verzeichnis mit mehreren Dateien)
     pub has_file_selector: bool,
+    /// Zwischenspeicher für Von-Datum bei der Bereichseingabe
+    date_from_input: String,
 }
 
 impl App {
@@ -83,6 +89,7 @@ impl App {
             should_quit: false,
             should_go_back: false,
             has_file_selector: false,
+            date_from_input: String::new(),
         };
 
         // Wähle den letzten (neuesten) Eintrag
@@ -188,6 +195,29 @@ impl App {
         self.apply_filter();
     }
 
+    /// Setzt einen Datumsbereich-Filter
+    pub fn set_date_range(&mut self, from: Option<NaiveDate>, to: Option<NaiveDate>) {
+        self.filter.date_from = from;
+        self.filter.date_to = to;
+        self.apply_filter();
+    }
+
+    /// Schnellfilter: letzter Kalendermonat
+    pub fn filter_last_month(&mut self) {
+        let today = Local::now().date_naive();
+        let first_this_month = NaiveDate::from_ymd_opt(today.year(), today.month(), 1).unwrap();
+        let last_month_end = first_this_month.pred_opt().unwrap();
+        let last_month_start = NaiveDate::from_ymd_opt(last_month_end.year(), last_month_end.month(), 1).unwrap();
+        self.set_date_range(Some(last_month_start), Some(last_month_end));
+    }
+
+    /// Schnellfilter: letzte N Monate (rollierend ab heute)
+    pub fn filter_last_months(&mut self, months: u32) {
+        let today = Local::now().date_naive();
+        let from = subtract_months(today, months);
+        self.set_date_range(Some(from), Some(today));
+    }
+
     /// Fokussiert auf die Request-ID des aktuell gewählten Eintrags
     pub fn set_request_focus(&mut self) {
         if let Some(req_id) = self.selected_entry().and_then(|e| e.request_id.clone()) {
@@ -238,6 +268,27 @@ impl App {
     }
 }
 
+/// Subtrahiert N Monate von einem Datum (bleibt im gültigen Bereich)
+fn subtract_months(date: NaiveDate, months: u32) -> NaiveDate {
+    let total_months = date.year() as i32 * 12 + date.month() as i32 - 1 - months as i32;
+    let year = total_months / 12;
+    let month = (total_months % 12 + 1) as u32;
+    let day = date.day().min(days_in_month(year, month));
+    NaiveDate::from_ymd_opt(year, month, day).unwrap()
+}
+
+fn days_in_month(year: i32, month: u32) -> u32 {
+    if month == 12 {
+        NaiveDate::from_ymd_opt(year + 1, 1, 1)
+    } else {
+        NaiveDate::from_ymd_opt(year, month + 1, 1)
+    }
+    .unwrap()
+    .pred_opt()
+    .unwrap()
+    .day()
+}
+
 /// Farbe für Log-Level
 fn level_color(level: LogLevel) -> Color {
     match level {
@@ -284,8 +335,21 @@ fn render_list(f: &mut Frame, app: &mut App, area: Rect) {
             app.filtered_indices.len()
         )
     } else if app.filter.is_active() {
+        let mut parts = Vec::new();
+        if let Some(label) = app.filter.date_label() {
+            parts.push(label);
+        }
+        if app.filter.min_level.is_some() || app.filter.search_text.is_some() {
+            parts.push("weiterer Filter".to_string());
+        }
+        let desc = if parts.is_empty() {
+            String::new()
+        } else {
+            format!(": {}", parts.join(", "))
+        };
         format!(
-            " [Filter aktiv: {} von {} Einträgen]",
+            " [Filter{} — {} von {} Einträgen]",
+            desc,
             app.filtered_indices.len(),
             app.entries.len()
         )
@@ -484,6 +548,7 @@ fn render_help(f: &mut Frame, area: Rect) {
         Line::from(""),
         Line::from(Span::styled("Filter:", Style::default().add_modifier(Modifier::BOLD))),
         Line::from("  f          Request-Fokus (alle Einträge dieser Request-ID)"),
+        Line::from("  d          Datumsfilter-Menü"),
         Line::from("  /          Textsuche"),
         Line::from("  1-4        Level-Filter (1=Error, 2=Warning, 3=Info, 4=Debug)"),
         Line::from("  0/ESC      Filter zurücksetzen"),
@@ -511,12 +576,57 @@ fn render_help(f: &mut Frame, area: Rect) {
     f.render_widget(help, popup_area);
 }
 
+/// Rendert das Datumsfilter-Menü
+fn render_date_menu(f: &mut Frame, app: &App, area: Rect) {
+    let today = Local::now().date_naive();
+    let first_this = NaiveDate::from_ymd_opt(today.year(), today.month(), 1).unwrap();
+    let last_month_end = first_this.pred_opt().unwrap();
+
+    let current = app.filter.date_label()
+        .map(|l| format!("Aktuell: {}", l))
+        .unwrap_or_else(|| "Kein Datumsfilter aktiv".to_string());
+
+    let lines = vec![
+        Line::from(Span::styled(" Datumsfilter", Style::default().add_modifier(Modifier::BOLD))),
+        Line::from(""),
+        Line::from(Span::styled(format!(" {}", current), Style::default().fg(Color::Cyan))),
+        Line::from(""),
+        Line::from(Span::styled(" Schnellfilter:", Style::default().add_modifier(Modifier::BOLD))),
+        Line::from(format!("  [1]  Letzter Monat  ({})", last_month_end.format("%m/%Y"))),
+        Line::from(format!("  [2]  Letzte 6 Monate  (ab {})", subtract_months(today, 6).format("%d.%m.%Y"))),
+        Line::from(format!("  [3]  Letzte 12 Monate  (ab {})", subtract_months(today, 12).format("%d.%m.%Y"))),
+        Line::from(""),
+        Line::from(Span::styled(" Eigener Bereich:", Style::default().add_modifier(Modifier::BOLD))),
+        Line::from("  [4]  Datumsbereich eingeben  (TT.MM.JJJJ)"),
+        Line::from(""),
+        Line::from("  [0]  Datumsfilter zurücksetzen"),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  ESC  Schließen",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ];
+
+    let popup = Paragraph::new(lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" Datum ")
+            .border_style(Style::default().fg(Color::Cyan)),
+    );
+
+    let popup_area = centered_rect(50, 60, area);
+    f.render_widget(Clear, popup_area);
+    f.render_widget(popup, popup_area);
+}
+
 /// Rendert die Filter-Eingabe
 fn render_filter_input(f: &mut Frame, app: &App, area: Rect) {
     let title = match app.filter_mode {
         FilterMode::Search => " Suche: ",
         FilterMode::Level => " Level-Filter (1-4, 0=alle): ",
         FilterMode::Component => " Component-Filter: ",
+        FilterMode::DateFrom => " Von-Datum (TT.MM.JJJJ): ",
+        FilterMode::DateTo => " Bis-Datum (TT.MM.JJJJ, leer = nur ein Tag): ",
         FilterMode::None => return,
     };
 
@@ -549,7 +659,7 @@ fn render_statusbar(f: &mut Frame, app: &App, area: Rect) {
         let pos = app.list_state.selected().map(|s| s + 1).unwrap_or(0);
         let total = app.filtered_indices.len();
         format!(
-            " {}/{} | ↑↓:Nav | Enter:Details | f:Fokus | /:Suche | 1-4:Level | 0:Reset | ?:Hilfe | q:Quit",
+            " {}/{} | ↑↓:Nav | Enter:Details | f:Fokus | d:Datum | /:Suche | 1-4:Level | 0:Reset | ?:Hilfe | q:Quit",
             pos, total
         )
     };
@@ -610,6 +720,10 @@ pub fn render(f: &mut Frame, app: &mut App) {
         AppView::Filter => {
             render_list(f, app, main_area);
         }
+        AppView::DateMenu => {
+            render_list(f, app, main_area);
+            render_date_menu(f, app, main_area);
+        }
     }
 
     // Filter-Eingabe (überlagert Statusbar)
@@ -634,6 +748,7 @@ pub fn handle_input(app: &mut App) -> io::Result<()> {
                     KeyCode::Esc => {
                         app.filter_mode = FilterMode::None;
                         app.filter_input.clear();
+                        app.date_from_input.clear();
                     }
                     KeyCode::Enter => {
                         match app.filter_mode {
@@ -644,6 +759,8 @@ pub fn handle_input(app: &mut App) -> io::Result<()> {
                                     Some(app.filter_input.clone())
                                 };
                                 app.set_search_filter(search);
+                                app.filter_mode = FilterMode::None;
+                                app.filter_input.clear();
                             }
                             FilterMode::Level => {
                                 let level = match app.filter_input.as_str() {
@@ -654,11 +771,32 @@ pub fn handle_input(app: &mut App) -> io::Result<()> {
                                     _ => None,
                                 };
                                 app.set_level_filter(level);
+                                app.filter_mode = FilterMode::None;
+                                app.filter_input.clear();
                             }
-                            _ => {}
+                            FilterMode::DateFrom => {
+                                // Von-Datum gespeichert, jetzt Bis-Datum abfragen
+                                app.date_from_input = app.filter_input.clone();
+                                app.filter_input.clear();
+                                app.filter_mode = FilterMode::DateTo;
+                            }
+                            FilterMode::DateTo => {
+                                let from = parse_date_input(&app.date_from_input);
+                                let to = if app.filter_input.is_empty() {
+                                    from // nur ein Tag
+                                } else {
+                                    parse_date_input(&app.filter_input)
+                                };
+                                app.set_date_range(from, to);
+                                app.filter_mode = FilterMode::None;
+                                app.filter_input.clear();
+                                app.date_from_input.clear();
+                            }
+                            _ => {
+                                app.filter_mode = FilterMode::None;
+                                app.filter_input.clear();
+                            }
                         }
-                        app.filter_mode = FilterMode::None;
-                        app.filter_input.clear();
                     }
                     KeyCode::Backspace => {
                         app.filter_input.pop();
@@ -674,6 +812,40 @@ pub fn handle_input(app: &mut App) -> io::Result<()> {
             // Hilfe-Ansicht
             if app.view == AppView::Help {
                 app.view = AppView::List;
+                return Ok(());
+            }
+
+            // Datumsmenü
+            if app.view == AppView::DateMenu {
+                match key.code {
+                    KeyCode::Esc | KeyCode::Char('d') => {
+                        app.view = AppView::List;
+                    }
+                    KeyCode::Char('1') => {
+                        app.filter_last_month();
+                        app.view = AppView::List;
+                    }
+                    KeyCode::Char('2') => {
+                        app.filter_last_months(6);
+                        app.view = AppView::List;
+                    }
+                    KeyCode::Char('3') => {
+                        app.filter_last_months(12);
+                        app.view = AppView::List;
+                    }
+                    KeyCode::Char('4') => {
+                        app.view = AppView::List;
+                        app.filter_mode = FilterMode::DateFrom;
+                        app.filter_input.clear();
+                    }
+                    KeyCode::Char('0') => {
+                        app.filter.date_from = None;
+                        app.filter.date_to = None;
+                        app.apply_filter();
+                        app.view = AppView::List;
+                    }
+                    _ => {}
+                }
                 return Ok(());
             }
 
@@ -763,6 +935,9 @@ pub fn handle_input(app: &mut App) -> io::Result<()> {
                 }
                 KeyCode::Char('0') => {
                     app.clear_filter();
+                }
+                KeyCode::Char('d') => {
+                    app.view = AppView::DateMenu;
                 }
                 KeyCode::Char('?') => {
                     app.view = AppView::Help;
