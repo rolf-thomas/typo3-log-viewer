@@ -16,7 +16,7 @@
 class Typo3LogViewer < Formula
   desc "Interactive viewer for TYPO3 log files"
   homepage "https://github.com/rolf-thomas/typo3-log-viewer"
-  version "0.1.1"
+  version "0.2.0"
   license "MIT"
 
   RELEASE_BASE = "https://github.com/rolf-thomas/typo3-log-viewer/releases/download/v#{version}".freeze
@@ -24,21 +24,21 @@ class Typo3LogViewer < Formula
   on_macos do
     if Hardware::CPU.arm?
       url "#{RELEASE_BASE}/typo3-log-viewer-#{version}-macos-arm64.tar.gz"
-      sha256 "b6250f2ffb2351cf0f2822299acb23c5fb475c589b30c7aa7f8c6b089cea1d1b"
+      sha256 "d56eefbe4611e92b7e977106c0b5760fb5819797e759091059ebd9ebeee50577"
     else
       url "#{RELEASE_BASE}/typo3-log-viewer-#{version}-macos-x86_64.tar.gz"
-      sha256 "ea37d75fb27f47536d18802015a91dabcf1d257f0c9edca6137fd8311bb73d0a"
+      sha256 "59e43736520f72d63c61613eaaae8be54e21bac7ce2318518c8698e0becc9876"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm?
       url "#{RELEASE_BASE}/typo3-log-viewer-#{version}-linux-arm64.tar.gz"
-      sha256 "0681a6a3b7559db2fd16a73d9d91aae7f39491018c10cab776010653d93f59ec"
+      sha256 "c314d369a2defae2c9244834ed8313b7ffdf93545ce33db57c6d57ec516d4bc9"
     else
       # Statische musl-Binary für maximale Portabilität
       url "#{RELEASE_BASE}/typo3-log-viewer-#{version}-linux-x86_64-musl.tar.gz"
-      sha256 "5719016233137c21579b152388b7b60bce207efd8a9a82c8aa6673c67a6d8e3b"
+      sha256 "e4ebd0606e6c88294cd033482e4da034d05a1000b1cded6da96f0f2a6c5cebdc"
     end
   end
 
