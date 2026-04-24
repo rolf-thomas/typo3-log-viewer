@@ -22,6 +22,10 @@ use std::path::{Path, PathBuf};
 use std::process;
 use ui::{run_app, App};
 
+fn print_version() {
+    println!("typo3-log-viewer {}", env!("CARGO_PKG_VERSION"));
+}
+
 fn print_usage() {
     eprintln!("TYPO3 Log Viewer - Interaktive Darstellung von TYPO3-Logdateien");
     eprintln!();
@@ -174,7 +178,13 @@ fn render_file_selector(f: &mut Frame, files: &[FileInfo], list_state: &mut List
 
     f.render_stateful_widget(list, chunks[0], list_state);
 
-    let help = Paragraph::new(" ↑↓/jk: Navigation | Enter: Auswählen | q/ESC: Abbrechen ")
+    let left = " ↑↓/jk: Navigation | Enter: Auswählen | q/ESC: Abbrechen";
+    let right = format!(" v{} ", env!("CARGO_PKG_VERSION"));
+    let width = chunks[1].width as usize;
+    let pad = width.saturating_sub(left.len() + right.len());
+    let help_text = format!("{}{}{}", left, " ".repeat(pad), right);
+
+    let help = Paragraph::new(help_text)
         .style(Style::default().bg(Color::DarkGray).fg(Color::White));
 
     f.render_widget(help, chunks[1]);
@@ -183,9 +193,13 @@ fn render_file_selector(f: &mut Frame, files: &[FileInfo], list_state: &mut List
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
-    // Hilfe anzeigen
+    // Hilfe / Version anzeigen
     if args.len() >= 2 && (args[1] == "-h" || args[1] == "--help") {
         print_usage();
+        return;
+    }
+    if args.len() >= 2 && (args[1] == "-v" || args[1] == "--version") {
+        print_version();
         return;
     }
 

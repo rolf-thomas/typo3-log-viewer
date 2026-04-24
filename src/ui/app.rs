@@ -518,16 +518,23 @@ fn render_filter_input(f: &mut Frame, app: &App, area: Rect) {
 
 /// Rendert die Statusleiste
 fn render_statusbar(f: &mut Frame, app: &App, area: Rect) {
-    let status = if app.filter_mode != FilterMode::None {
+    let version = env!("CARGO_PKG_VERSION");
+
+    let left = if app.filter_mode != FilterMode::None {
         "Enter: Bestätigen | ESC: Abbrechen".to_string()
     } else {
         let pos = app.list_state.selected().map(|s| s + 1).unwrap_or(0);
         let total = app.filtered_indices.len();
         format!(
-            " {}/{} | ↑↓:Nav | Enter:Details | /:Suche | 1-4:Level | 0:Reset | ?:Hilfe | q:Quit ",
+            " {}/{} | ↑↓:Nav | Enter:Details | /:Suche | 1-4:Level | 0:Reset | ?:Hilfe | q:Quit",
             pos, total
         )
     };
+
+    let right = format!(" v{} ", version);
+    let width = area.width as usize;
+    let pad = width.saturating_sub(left.len() + right.len());
+    let status = format!("{}{}{}", left, " ".repeat(pad), right);
 
     let statusbar = Paragraph::new(status)
         .style(Style::default().bg(Color::DarkGray).fg(Color::White));
