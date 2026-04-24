@@ -1,6 +1,6 @@
 [package]
 name = "typo3-log-viewer"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Interactive viewer for TYPO3 log files"
 authors = ["RTL"]
