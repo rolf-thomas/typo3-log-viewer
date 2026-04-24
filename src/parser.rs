@@ -147,7 +147,7 @@ pub fn extract_json_from_message(message: &str) -> Option<(String, String)> {
     None
 }
 
-/// Extrahiert alle JSON-Objekte aus einem Text
+#[allow(dead_code)]
 pub fn extract_all_json(text: &str) -> Vec<(usize, String)> {
     let mut results = Vec::new();
     let chars: Vec<char> = text.chars().collect();

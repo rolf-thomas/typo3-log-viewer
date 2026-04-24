@@ -3,3 +3,4 @@
 /var
 !/var/log/.gitkeep
 /dist
+/CLAUDE.md

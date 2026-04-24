@@ -20,6 +20,7 @@ use std::path::PathBuf;
 pub enum AppView {
     List,
     Detail,
+    #[allow(dead_code)]
     Filter,
     Help,
 }
@@ -29,7 +30,9 @@ pub enum AppView {
 pub enum FilterMode {
     None,
     Search,
+    #[allow(dead_code)]
     Level,
+    #[allow(dead_code)]
     Component,
 }
 

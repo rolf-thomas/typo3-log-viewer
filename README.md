@@ -13,14 +13,31 @@ Interaktiver Kommandozeilen-Viewer für TYPO3-Logdateien mit Listen- und Detaila
 
 ## Installation
 
-### Bauen aus dem Quellcode
+### Voraussetzungen auf einem neuen macOS-System
 
-Voraussetzung: [Rust](https://rustup.rs/) (Rust >= 1.75)
+Für den vollständigen Build werden folgende Komponenten benötigt:
+
+| Komponente | Pflicht | Zweck |
+|---|---|---|
+| Xcode Command Line Tools | ja | C-Linker, `codesign` |
+| [Homebrew](https://brew.sh/) | empfohlen | Paketverwaltung |
+| [Rust >= 1.75](https://rustup.rs/) | ja | Compiler + cargo |
+| [Zig](https://ziglang.org/) + cargo-zigbuild | optional | Linux-Cross-Build ohne Docker |
+| [GitHub CLI (`gh`)](https://cli.github.com/) | optional | Release-Workflow |
+
+Das mitgelieferte Script prüft alle Voraussetzungen und bietet an, fehlende Komponenten direkt zu installieren:
+
+```bash
+./check-setup.sh
+```
+
+### Bauen aus dem Quellcode
 
 ```bash
 git clone <repo-url>
 cd typo3-log-viewer
-./build.sh
+./check-setup.sh   # Voraussetzungen prüfen
+./build.sh         # Release-Binary bauen und signieren
 ```
 
 Das Build-Script kompiliert die Release-Version und signiert die Binary ad-hoc, um macOS Gatekeeper-Warnungen zu vermeiden.
