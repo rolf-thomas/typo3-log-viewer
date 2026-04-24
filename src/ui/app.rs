@@ -59,6 +59,10 @@ pub struct App {
     pub detail_scroll: u16,
     /// Soll die App beendet werden?
     pub should_quit: bool,
+    /// Soll zur Dateiauswahl zurückgekehrt werden?
+    pub should_go_back: bool,
+    /// Dateiauswahl war verfügbar (Verzeichnis mit mehreren Dateien)
+    pub has_file_selector: bool,
 }
 
 impl App {
@@ -77,6 +81,8 @@ impl App {
             filter_input: String::new(),
             detail_scroll: 0,
             should_quit: false,
+            should_go_back: false,
+            has_file_selector: false,
         };
 
         // Wähle den letzten (neuesten) Eintrag
@@ -703,6 +709,8 @@ pub fn handle_input(app: &mut App) -> io::Result<()> {
                 KeyCode::Esc => {
                     if app.filter.is_active() {
                         app.clear_filter();
+                    } else if app.has_file_selector {
+                        app.should_go_back = true;
                     } else {
                         app.should_quit = true;
                     }
@@ -767,11 +775,16 @@ pub fn handle_input(app: &mut App) -> io::Result<()> {
     Ok(())
 }
 
+pub enum AppExit {
+    Quit,
+    Back,
+}
+
 /// Startet die App
 pub fn run_app<B: ratatui::backend::Backend>(
     terminal: &mut ratatui::Terminal<B>,
     mut app: App,
-) -> io::Result<()> {
+) -> io::Result<AppExit> {
     let mut last_reload_check = std::time::Instant::now();
     let reload_interval = std::time::Duration::from_millis(500);
 
@@ -785,10 +798,11 @@ pub fn run_app<B: ratatui::backend::Backend>(
             last_reload_check = std::time::Instant::now();
         }
 
+        if app.should_go_back {
+            return Ok(AppExit::Back);
+        }
         if app.should_quit {
-            break;
+            return Ok(AppExit::Quit);
         }
     }
-
-    Ok(())
 }

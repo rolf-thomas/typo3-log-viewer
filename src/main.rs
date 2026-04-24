@@ -20,7 +20,7 @@ use ratatui::{
 use std::io::{self, stdout};
 use std::path::{Path, PathBuf};
 use std::process;
-use ui::{run_app, App};
+use ui::{run_app, App, AppExit};
 
 fn print_version() {
     println!("typo3-log-viewer {}", env!("CARGO_PKG_VERSION"));
@@ -53,7 +53,7 @@ struct FileInfo {
 }
 
 /// Interaktive Dateiauswahl mit TUI
-fn select_file_interactive(files: &[PathBuf]) -> io::Result<Option<PathBuf>> {
+fn select_file_interactive(files: &[PathBuf], preselect: Option<usize>) -> io::Result<Option<PathBuf>> {
     // Datei-Infos sammeln
     let file_infos: Vec<FileInfo> = files
         .iter()
@@ -83,7 +83,7 @@ fn select_file_interactive(files: &[PathBuf]) -> io::Result<Option<PathBuf>> {
     let mut terminal = Terminal::new(backend)?;
 
     let mut list_state = ListState::default();
-    list_state.select(Some(0));
+    list_state.select(Some(preselect.unwrap_or(0)));
 
     let mut selected_file: Option<PathBuf> = None;
 
@@ -225,60 +225,74 @@ fn main() {
         process::exit(1);
     }
 
-    // Datei zum Öffnen bestimmen
-    let file_to_open = if path.is_dir() {
+    // Dateien im Verzeichnis ermitteln (oder direkte Datei)
+    let (files, has_file_selector) = if path.is_dir() {
         match find_log_files(path) {
             Ok(files) if files.is_empty() => {
                 eprintln!("Keine .log-Dateien in '{}' gefunden.", path_arg);
                 process::exit(1);
             }
-            Ok(files) if files.len() == 1 => files[0].clone(),
-            Ok(files) => match select_file_interactive(&files) {
-                Ok(Some(f)) => f,
-                Ok(None) => {
-                    // Benutzer hat abgebrochen
-                    process::exit(0);
-                }
-                Err(e) => {
-                    eprintln!("Fehler bei der Dateiauswahl: {}", e);
-                    process::exit(1);
-                }
-            },
+            Ok(files) => {
+                let has_selector = files.len() > 1;
+                (files, has_selector)
+            }
             Err(e) => {
                 eprintln!("Fehler beim Lesen des Verzeichnisses: {}", e);
                 process::exit(1);
             }
         }
     } else {
-        path.to_path_buf()
+        (vec![path.to_path_buf()], false)
     };
 
-    // Datei laden
-    eprintln!("Lade {}...", file_to_open.display());
+    // Hauptschleife: Dateiauswahl → Viewer → ggf. zurück zur Auswahl
+    let mut last_selected_index: Option<usize> = None;
+    loop {
+        let file_to_open = if files.len() == 1 {
+            files[0].clone()
+        } else {
+            match select_file_interactive(&files, last_selected_index) {
+                Ok(Some(f)) => {
+                    last_selected_index = files.iter().position(|p| p == &f);
+                    f
+                }
+                Ok(None) => process::exit(0),
+                Err(e) => {
+                    eprintln!("Fehler bei der Dateiauswahl: {}", e);
+                    process::exit(1);
+                }
+            }
+        };
 
-    let result = match load_log_file(&file_to_open) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("Fehler beim Laden der Datei: {}", e);
+        // Datei laden
+        eprintln!("Lade {}...", file_to_open.display());
+        let result = match load_log_file(&file_to_open) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("Fehler beim Laden der Datei: {}", e);
+                process::exit(1);
+            }
+        };
+
+        if result.entries.is_empty() {
+            eprintln!("Keine Log-Einträge in der Datei gefunden.");
             process::exit(1);
         }
-    };
 
-    if result.entries.is_empty() {
-        eprintln!("Keine Log-Einträge in der Datei gefunden.");
-        process::exit(1);
-    }
+        eprintln!("{} Einträge geladen.", result.entries.len());
 
-    eprintln!("{} Einträge geladen.", result.entries.len());
-
-    // Terminal UI starten
-    if let Err(e) = run_tui(result) {
-        eprintln!("Fehler: {}", e);
-        process::exit(1);
+        match run_tui(result, has_file_selector) {
+            Ok(AppExit::Back) => continue,
+            Ok(AppExit::Quit) => break,
+            Err(e) => {
+                eprintln!("Fehler: {}", e);
+                process::exit(1);
+            }
+        }
     }
 }
 
-fn run_tui(result: loader::LoadResult) -> io::Result<()> {
+fn run_tui(result: loader::LoadResult, has_file_selector: bool) -> io::Result<AppExit> {
     // Terminal setup
     enable_raw_mode()?;
     let mut stdout = stdout();
@@ -288,7 +302,8 @@ fn run_tui(result: loader::LoadResult) -> io::Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     // App erstellen und ausführen
-    let app = App::new(result);
+    let mut app = App::new(result);
+    app.has_file_selector = has_file_selector;
     let res = run_app(&mut terminal, app);
 
     // Terminal cleanup
