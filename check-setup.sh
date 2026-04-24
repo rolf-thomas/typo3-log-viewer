@@ -204,7 +204,7 @@ else
 fi
 
 if [ "$ZIG_OK" -eq 1 ] && [ "$ZIGBUILD_OK" -eq 1 ]; then
-  # Rust-Targets prüfen
+  # Rust-Targets für Linux prüfen
   INSTALLED_TARGETS=$(rustup target list --installed 2>/dev/null)
   for TARGET in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-unknown-linux-musl; do
     if echo "$INSTALLED_TARGETS" | grep -q "^$TARGET$"; then
@@ -214,6 +214,18 @@ if [ "$ZIG_OK" -eq 1 ] && [ "$ZIGBUILD_OK" -eq 1 ]; then
       ask_install "Target $TARGET hinzufügen" "rustup target add $TARGET" || true
     fi
   done
+fi
+
+# macOS Intel Target (immer prüfen, nicht nur wenn Zig vorhanden)
+if [ "$RUSTUP_OK" -eq 1 ]; then
+  INSTALLED_TARGETS=$(rustup target list --installed 2>/dev/null)
+  INTEL_TARGET="x86_64-apple-darwin"
+  if echo "$INSTALLED_TARGETS" | grep -q "^$INTEL_TARGET$"; then
+    ok "rustup target: $INTEL_TARGET (macOS Intel)"
+  else
+    warn "rustup target fehlt: $INTEL_TARGET (nötig für macOS Intel Build)"
+    ask_install "Target $INTEL_TARGET hinzufügen" "rustup target add $INTEL_TARGET" || true
+  fi
 fi
 echo ""
 
