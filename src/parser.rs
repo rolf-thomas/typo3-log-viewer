@@ -7,7 +7,7 @@ use regex::Regex;
 /// DATUM [LEVEL] request="REQUEST_ID" component="COMPONENT": NACHRICHT
 ///
 /// Beispiel:
-/// Thu, 02 Apr 2026 12:00:02 +0200 [ERROR] request="043d54b20b2e8" component="WeberHaus.WhConnector": Message
+/// Thu, 02 Apr 2026 12:00:02 +0200 [ERROR] request="043d54b20b2e8" component="Vendor.Extension": Message
 static LOG_REGEX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
         r#"^([A-Za-z]{3}, \d{2} [A-Za-z]{3} \d{4} \d{2}:\d{2}:\d{2} [+-]\d{4}) \[([A-Z]+)\] request="([^"]*)" component="([^"]*)": (.*)$"#
@@ -204,24 +204,24 @@ mod tests {
 
     #[test]
     fn test_parse_error_log() {
-        let line = r#"Thu, 02 Apr 2026 12:00:02 +0200 [ERROR] request="043d54b20b2e8" component="WeberHaus.WhConnector.Service.SugarCrmRestService": Client error"#;
+        let line = r#"Thu, 02 Apr 2026 12:00:02 +0200 [ERROR] request="043d54b20b2e8" component="Vendor.Extension.Service.ProductCrmRestService": Client error"#;
 
         let entry = parse_log_line(line, 1).expect("Should parse");
 
         assert_eq!(entry.level, LogLevel::Error);
         assert_eq!(entry.request_id, Some("043d54b20b2e8".to_string()));
-        assert!(entry.component.contains("SugarCrmRestService"));
+        assert!(entry.component.contains("ProductCrmRestService"));
         assert_eq!(entry.message, "Client error");
     }
 
     #[test]
     fn test_parse_debug_log() {
-        let line = r#"Thu, 02 Apr 2026 11:06:55 +0200 [DEBUG] request="a03b3f7c34daa" component="WeberHaus.WhConnector.Service.SugarCrmRestService": kisRequest - {"endpoint":"https://example.com"}"#;
+        let line = r#"Thu, 02 Apr 2026 11:06:55 +0200 [DEBUG] request="a03b3f7c34daa" component="Vendor.Extension.Service.ProductCrmRestService": crmRequest - {"endpoint":"https://example.com"}"#;
 
         let entry = parse_log_line(line, 1).expect("Should parse");
 
         assert_eq!(entry.level, LogLevel::Debug);
-        assert!(entry.message.contains("kisRequest"));
+        assert!(entry.message.contains("crmRequest"));
     }
 
     #[test]

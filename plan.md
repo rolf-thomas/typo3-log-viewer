@@ -12,7 +12,7 @@ DATUM [LEVEL] request="REQUEST_ID" component="COMPONENT": NACHRICHT
 
 Beispiel:
 ```
-Thu, 02 Apr 2026 12:00:02 +0200 [ERROR] request="043d54b20b2e8" component="WeberHaus.WhConnector.Service.SugarCrmRestService": Client error: ...
+Thu, 02 Apr 2026 12:00:02 +0200 [ERROR] request="043d54b20b2e8" component="Vendor.Extension.Service.ProductCrmRestService": Client error: ...
 ```
 
 ### Extrahierte Felder:
@@ -111,15 +111,15 @@ src/
 ### Listen-Ansicht:
 ```
 ┌─ TYPO3 Log Viewer ─────────────────────────────────────────┐
-│ [var/log/wh_connector.log] 1,234 Einträge                  │
+│ [var/log/vd_connector.log] 1,234 Einträge                  │
 ├────────────────────────────────────────────────────────────┤
 │ 02.04.26 12:00 [ERROR] Client error: POST .../oauth2/token │
 │ 02.04.26 13:00 [ERROR] Client error: POST .../oauth2/token │
 │>02.04.26 14:00 [ERROR] Guzzle ClientException - {"code"... │
-│ 02.04.26 14:18 [DEBUG] kisRequest - {"endpoint":"https:... │
-│ 02.04.26 14:33 [DEBUG] kisRequest - {"endpoint":"https:... │
+│ 02.04.26 14:18 [DEBUG] crmRequest - {"endpoint":"https:... │
+│ 02.04.26 14:33 [DEBUG] crmRequest - {"endpoint":"https:... │
 ├────────────────────────────────────────────────────────────┤
-│ ↑↓ Navigate  Enter: Details  f: Filter  q: Quit           │
+│ ↑↓ Navigate  Enter: Details  f: Filter  q: Quit            │
 └────────────────────────────────────────────────────────────┘
 ```
 
@@ -129,10 +129,10 @@ src/
 │ Zeitpunkt:  Thu, 02 Apr 2026 14:00:02 +0200                │
 │ Level:      ERROR                                          │
 │ Request:    fd54bf1f3eccb                                  │
-│ Component:  WeberHaus.WhConnector.Service.SugarCrmRest...  │
+│ Component:  Vendor.Extension.Service.ProductCrmRest...     │
 ├────────────────────────────────────────────────────────────┤
 │ Nachricht:                                                 │
-│ Client error: `POST https://crm-live.weberhaus.de/...`     │
+│ Client error: `POST https://crm-live.vendor.de/...`        │
 │ resulted in a `400 Bad Request Unknown` response:          │
 │ {                                                          │
 │   "error": "invalid_grant",                                │
@@ -197,7 +197,7 @@ cargo build --release
 # Binary liegt dann in: target/release/typo3-log-viewer
 
 # Nutzung
-./typo3-log-viewer var/log/wh_connector.log
+./typo3-log-viewer var/log/vd_connector.log
 # oder
 ./typo3-log-viewer var/log/
 ```
