@@ -182,6 +182,16 @@ impl App {
         self.apply_filter();
     }
 
+    /// Fokussiert auf die Request-ID des aktuell gewählten Eintrags
+    pub fn set_request_focus(&mut self) {
+        if let Some(req_id) = self.selected_entry().and_then(|e| e.request_id.clone()) {
+            self.filter.request_id = Some(req_id);
+            self.apply_filter();
+            // Selektion auf ersten Eintrag des Requests setzen
+            self.list_state.select(Some(0));
+        }
+    }
+
     /// Prüft, ob sich die Datei geändert hat, und lädt sie neu.
     /// Die aktuelle Selektion wird per line_number wiederhergestellt,
     /// sodass neue Einträge die Auswahl nicht verändern.
@@ -261,7 +271,13 @@ fn render_list(f: &mut Frame, app: &mut App, area: Rect) {
         .collect();
 
     // Status-Text für Titel
-    let filter_info = if app.filter.is_active() {
+    let filter_info = if let Some(req_id) = &app.filter.request_id {
+        format!(
+            " [Request-Fokus: {} — {} Einträge]",
+            req_id,
+            app.filtered_indices.len()
+        )
+    } else if app.filter.is_active() {
         format!(
             " [Filter aktiv: {} von {} Einträgen]",
             app.filtered_indices.len(),
@@ -461,9 +477,10 @@ fn render_help(f: &mut Frame, area: Rect) {
         Line::from("  Enter      Details anzeigen"),
         Line::from(""),
         Line::from(Span::styled("Filter:", Style::default().add_modifier(Modifier::BOLD))),
+        Line::from("  f          Request-Fokus (alle Einträge dieser Request-ID)"),
         Line::from("  /          Textsuche"),
         Line::from("  1-4        Level-Filter (1=Error, 2=Warning, 3=Info, 4=Debug)"),
-        Line::from("  0          Filter zurücksetzen"),
+        Line::from("  0/ESC      Filter zurücksetzen"),
         Line::from(""),
         Line::from(Span::styled("Allgemein:", Style::default().add_modifier(Modifier::BOLD))),
         Line::from("  ?          Diese Hilfe"),
@@ -526,7 +543,7 @@ fn render_statusbar(f: &mut Frame, app: &App, area: Rect) {
         let pos = app.list_state.selected().map(|s| s + 1).unwrap_or(0);
         let total = app.filtered_indices.len();
         format!(
-            " {}/{} | ↑↓:Nav | Enter:Details | /:Suche | 1-4:Level | 0:Reset | ?:Hilfe | q:Quit",
+            " {}/{} | ↑↓:Nav | Enter:Details | f:Fokus | /:Suche | 1-4:Level | 0:Reset | ?:Hilfe | q:Quit",
             pos, total
         )
     };
@@ -689,6 +706,9 @@ pub fn handle_input(app: &mut App) -> io::Result<()> {
                     } else {
                         app.should_quit = true;
                     }
+                }
+                KeyCode::Char('f') => {
+                    app.set_request_focus();
                 }
                 KeyCode::Up | KeyCode::Char('k') => {
                     app.move_up();

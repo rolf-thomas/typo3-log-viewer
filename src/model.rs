@@ -124,6 +124,8 @@ pub struct LogFilter {
     pub search_text: Option<String>,
     /// Filter nach Component
     pub component_filter: Option<String>,
+    /// Fokus auf eine einzelne Request-ID
+    pub request_id: Option<String>,
 }
 
 impl LogFilter {
@@ -154,6 +156,18 @@ impl LogFilter {
             }
         }
 
+        // Request-Fokus
+        if let Some(req_id) = &self.request_id {
+            match &entry.request_id {
+                Some(id) => {
+                    if id != req_id {
+                        return false;
+                    }
+                }
+                None => return false,
+            }
+        }
+
         true
     }
 
@@ -161,11 +175,13 @@ impl LogFilter {
         self.min_level.is_some()
             || self.search_text.is_some()
             || self.component_filter.is_some()
+            || self.request_id.is_some()
     }
 
     pub fn clear(&mut self) {
         self.min_level = None;
         self.search_text = None;
         self.component_filter = None;
+        self.request_id = None;
     }
 }
