@@ -170,8 +170,8 @@ fn render_file_selector(f: &mut Frame, files: &[FileInfo], list_state: &mut List
         )
         .highlight_style(
             Style::default()
-                .bg(Color::DarkGray)
-                .fg(Color::Yellow)
+                .bg(Color::Rgb(50, 70, 110))
+                .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("> ");
