@@ -480,11 +480,6 @@ fn render_detail(f: &mut Frame, app: &App, area: Rect) {
             Span::raw(line_number),
         ]),
         Line::from(""),
-        Line::from(Span::styled(
-            "Nachricht:",
-            Style::default().add_modifier(Modifier::BOLD),
-        )),
-        Line::from(""),
     ];
 
     // Prüfe ob JSON in der Nachricht enthalten ist
