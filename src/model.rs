@@ -93,15 +93,6 @@ impl LogEntry {
         self.timestamp.format("%a, %d %b %Y %H:%M:%S %z").to_string()
     }
 
-    /// Kürzt die Nachricht auf eine maximale Länge
-    pub fn truncated_message(&self, max_len: usize) -> String {
-        if self.message.len() <= max_len {
-            self.message.clone()
-        } else {
-            format!("{}...", &self.message[..max_len.saturating_sub(3)])
-        }
-    }
-
     /// Formatiert extra_data als hübsches JSON falls möglich
     pub fn formatted_extra_data(&self) -> Option<String> {
         self.extra_data.as_ref().map(|data| {

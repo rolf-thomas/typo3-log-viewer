@@ -324,6 +324,16 @@ fn level_color(level: LogLevel) -> Color {
     }
 }
 
+/// Teilt eine Nachricht am " - {" oder " - [" Trenner in (Haupttext, Option<Rest>)
+fn split_message_at_json(message: &str) -> (&str, Option<&str>) {
+    for sep in [" - {", " - ["] {
+        if let Some(pos) = message.find(sep) {
+            return (&message[..pos], Some(&message[pos..]));
+        }
+    }
+    (message, None)
+}
+
 /// Rendert die Listen-Ansicht
 fn render_list(f: &mut Frame, app: &mut App, area: Rect) {
     let items: Vec<ListItem> = app
@@ -339,15 +349,38 @@ fn render_list(f: &mut Frame, app: &mut App, area: Rect) {
             let prefix_len = timestamp.len() + level.len() + 3; // +3 für Leerzeichen
             let msg_width = (area.width as usize).saturating_sub(prefix_len + 4);
 
-            let line = Line::from(vec![
+            let (main_text, dim_rest) = split_message_at_json(&entry.message);
+
+            let main_truncated = if main_text.len() <= msg_width {
+                main_text.to_string()
+            } else {
+                format!("{}...", &main_text[..msg_width.saturating_sub(3)])
+            };
+
+            let mut spans = vec![
                 Span::styled(timestamp, Style::default().fg(Color::Cyan)),
                 Span::raw(" "),
                 Span::styled(level, level_style.add_modifier(Modifier::BOLD)),
                 Span::raw(" "),
-                Span::raw(entry.truncated_message(msg_width)),
-            ]);
+                Span::raw(main_truncated.clone()),
+            ];
 
-            ListItem::new(line)
+            if let Some(rest) = dim_rest {
+                let remaining = msg_width.saturating_sub(main_truncated.len());
+                if remaining > 4 {
+                    let rest_truncated = if rest.len() <= remaining {
+                        rest.to_string()
+                    } else {
+                        format!("{}...", &rest[..remaining.saturating_sub(3)])
+                    };
+                    spans.push(Span::styled(
+                        rest_truncated,
+                        Style::default().fg(Color::DarkGray),
+                    ));
+                }
+            }
+
+            ListItem::new(Line::from(spans))
         })
         .collect();
 
