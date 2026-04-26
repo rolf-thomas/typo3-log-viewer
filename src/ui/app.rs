@@ -202,6 +202,12 @@ impl App {
         self.apply_filter();
     }
 
+    /// Schnellfilter: heute
+    pub fn filter_today(&mut self) {
+        let today = Local::now().date_naive();
+        self.set_date_range(Some(today), Some(today));
+    }
+
     /// Schnellfilter: letzter Kalendermonat
     pub fn filter_last_month(&mut self) {
         let today = Local::now().date_naive();
@@ -612,12 +618,13 @@ fn render_date_menu(f: &mut Frame, app: &App, area: Rect) {
         Line::from(Span::styled(format!(" {}", current), Style::default().fg(Color::Cyan))),
         Line::from(""),
         Line::from(Span::styled(" Schnellfilter:", Style::default().add_modifier(Modifier::BOLD))),
-        Line::from(format!("  [1]  Letzter Monat  ({})", last_month_end.format("%m/%Y"))),
-        Line::from(format!("  [2]  Letzte 6 Monate  (ab {})", subtract_months(today, 6).format("%d.%m.%Y"))),
-        Line::from(format!("  [3]  Letzte 12 Monate  (ab {})", subtract_months(today, 12).format("%d.%m.%Y"))),
+        Line::from(format!("  [1]  Heute  ({})", today.format("%d.%m.%Y"))),
+        Line::from(format!("  [2]  Letzter Monat  ({})", last_month_end.format("%m/%Y"))),
+        Line::from(format!("  [3]  Letzte 6 Monate  (ab {})", subtract_months(today, 6).format("%d.%m.%Y"))),
+        Line::from(format!("  [4]  Letzte 12 Monate  (ab {})", subtract_months(today, 12).format("%d.%m.%Y"))),
         Line::from(""),
         Line::from(Span::styled(" Eigener Bereich:", Style::default().add_modifier(Modifier::BOLD))),
-        Line::from("  [4]  Datumsbereich eingeben  (TT.MM.JJJJ)"),
+        Line::from("  [5]  Datumsbereich eingeben  (TT.MM.JJJJ)"),
         Line::from(""),
         Line::from("  [0]  Datumsfilter zurücksetzen"),
         Line::from(""),
@@ -849,18 +856,22 @@ pub fn handle_input(app: &mut App) -> io::Result<()> {
                         app.view = AppView::List;
                     }
                     KeyCode::Char('1') => {
-                        app.filter_last_month();
+                        app.filter_today();
                         app.view = AppView::List;
                     }
                     KeyCode::Char('2') => {
-                        app.filter_last_months(6);
+                        app.filter_last_month();
                         app.view = AppView::List;
                     }
                     KeyCode::Char('3') => {
-                        app.filter_last_months(12);
+                        app.filter_last_months(6);
                         app.view = AppView::List;
                     }
                     KeyCode::Char('4') => {
+                        app.filter_last_months(12);
+                        app.view = AppView::List;
+                    }
+                    KeyCode::Char('5') => {
                         app.view = AppView::List;
                         app.filter_mode = FilterMode::DateFrom;
                         app.filter_input.clear();
