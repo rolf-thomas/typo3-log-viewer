@@ -61,6 +61,8 @@ pub struct App {
     pub filter_input: String,
     /// Scroll-Position in Detail-Ansicht
     pub detail_scroll: u16,
+    /// "exception"-Key in JSON-Detailansicht aufgeklappt
+    pub show_exception: bool,
     /// Soll die App beendet werden?
     pub should_quit: bool,
     /// Soll zur Dateiauswahl zurückgekehrt werden?
@@ -86,6 +88,7 @@ impl App {
             filter_mode: FilterMode::None,
             filter_input: String::new(),
             detail_scroll: 0,
+            show_exception: false,
             should_quit: false,
             should_go_back: false,
             has_file_selector: false,
@@ -475,6 +478,117 @@ fn render_list(f: &mut Frame, app: &mut App, area: Rect) {
     }
 }
 
+/// Rendert einen JSON-Wert als formatierte Lines.
+/// String-Werte mit \n werden aufgefächert. "exception"-Keys werden
+/// standardmäßig eingeklappt und nur bei show_exception aufgeklappt.
+fn render_json_value(
+    value: &serde_json::Value,
+    indent: usize,
+    color: Color,
+    show_exception: bool,
+    lines: &mut Vec<Line<'static>>,
+) {
+    let pad = "  ".repeat(indent);
+    match value {
+        serde_json::Value::Object(map) => {
+            lines.push(Line::from(Span::styled(
+                format!("{}{{", pad),
+                Style::default().fg(color),
+            )));
+            let len = map.len();
+            for (i, (key, val)) in map.iter().enumerate() {
+                let comma = if i + 1 < len { "," } else { "" };
+                // "exception"-Key: eingeklappt anzeigen wenn nicht explizit aufgeklappt
+                if key == "exception" && !show_exception {
+                    let hint = Style::default().fg(Color::DarkGray);
+                    lines.push(Line::from(Span::styled(
+                        format!("{}  \"exception\": [ausgeblendet — e zum Einblenden]{}", pad, comma),
+                        hint,
+                    )));
+                    continue;
+                }
+                match val {
+                    serde_json::Value::String(s) if s.contains('\n') => {
+                        lines.push(Line::from(Span::styled(
+                            format!("{}  \"{}\": ▼", pad, key),
+                            Style::default().fg(color).add_modifier(Modifier::BOLD),
+                        )));
+                        for text_line in s.lines() {
+                            lines.push(Line::from(Span::styled(
+                                format!("{}    {}", pad, text_line),
+                                Style::default().fg(color),
+                            )));
+                        }
+                        if !comma.is_empty() {
+                            lines.push(Line::from(Span::styled(
+                                format!("{}  {}", pad, comma),
+                                Style::default().fg(color),
+                            )));
+                        }
+                    }
+                    serde_json::Value::Object(_) | serde_json::Value::Array(_) => {
+                        lines.push(Line::from(Span::styled(
+                            format!("{}  \"{}\":", pad, key),
+                            Style::default().fg(color).add_modifier(Modifier::BOLD),
+                        )));
+                        render_json_value(val, indent + 1, color, show_exception, lines);
+                        if !comma.is_empty() {
+                            if let Some(last) = lines.last_mut() {
+                                let s = last.spans.iter().map(|s| s.content.as_ref()).collect::<String>();
+                                *last = Line::from(Span::styled(
+                                    format!("{}{}", s, comma),
+                                    Style::default().fg(color),
+                                ));
+                            }
+                        }
+                    }
+                    _ => {
+                        let val_str = match val {
+                            serde_json::Value::String(s) => format!("\"{}\"", s),
+                            other => other.to_string(),
+                        };
+                        lines.push(Line::from(Span::styled(
+                            format!("{}  \"{}\": {}{}", pad, key, val_str, comma),
+                            Style::default().fg(color),
+                        )));
+                    }
+                }
+            }
+            lines.push(Line::from(Span::styled(
+                format!("{}}}", pad),
+                Style::default().fg(color),
+            )));
+        }
+        serde_json::Value::Array(arr) => {
+            lines.push(Line::from(Span::styled(
+                format!("{}[", pad),
+                Style::default().fg(color),
+            )));
+            for val in arr {
+                render_json_value(val, indent + 1, color, show_exception, lines);
+            }
+            lines.push(Line::from(Span::styled(
+                format!("{}]", pad),
+                Style::default().fg(color),
+            )));
+        }
+        serde_json::Value::String(s) if s.contains('\n') => {
+            for text_line in s.lines() {
+                lines.push(Line::from(Span::styled(
+                    format!("{}  {}", pad, text_line),
+                    Style::default().fg(color),
+                )));
+            }
+        }
+        other => {
+            lines.push(Line::from(Span::styled(
+                format!("{}  {}", pad, other),
+                Style::default().fg(color),
+            )));
+        }
+    }
+}
+
 /// Rendert die Detail-Ansicht
 fn render_detail(f: &mut Frame, app: &App, area: Rect) {
     let entry = match app.selected_entry() {
@@ -542,11 +656,15 @@ fn render_detail(f: &mut Frame, app: &App, area: Rect) {
         )));
         lines.push(Line::from(""));
 
-        for json_line in json_formatted.lines() {
-            lines.push(Line::from(Span::styled(
-                format!("  {}", json_line),
-                Style::default().fg(Color::Cyan),
-            )));
+        if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&json_formatted) {
+            render_json_value(&json_val, 1, Color::Cyan, app.show_exception, &mut lines);
+        } else {
+            for json_line in json_formatted.lines() {
+                lines.push(Line::from(Span::styled(
+                    format!("  {}", json_line),
+                    Style::default().fg(Color::Cyan),
+                )));
+            }
         }
     } else {
         // Normale Nachricht ohne JSON
@@ -566,13 +684,7 @@ fn render_detail(f: &mut Frame, app: &App, area: Rect) {
 
         // Prüfe ob extra_data JSON ist
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&formatted) {
-            let pretty = serde_json::to_string_pretty(&json).unwrap_or(formatted.clone());
-            for data_line in pretty.lines() {
-                lines.push(Line::from(Span::styled(
-                    format!("  {}", data_line),
-                    Style::default().fg(Color::Green),
-                )));
-            }
+            render_json_value(&json, 1, Color::Green, app.show_exception, &mut lines);
         } else {
             for data_line in formatted.lines() {
                 lines.push(Line::from(Span::styled(
@@ -730,7 +842,7 @@ fn render_statusbar(f: &mut Frame, app: &App, area: Rect) {
         let pos = app.list_state.selected().map(|s| s + 1).unwrap_or(0);
         let total = app.filtered_indices.len();
         format!(
-            " {}/{} | ↑↓:Scrollen | ←→:Eintrag wechseln | ESC/Enter:Zurück | q:Quit",
+            " {}/{} | ↑↓:Scrollen | ←→:Eintrag wechseln | e:Exception ein/aus | ESC/Enter:Zurück | q:Quit",
             pos, total
         )
     } else {
@@ -950,21 +1062,28 @@ pub fn handle_input(app: &mut App) -> io::Result<()> {
                     KeyCode::PageDown => {
                         app.detail_scroll = app.detail_scroll.saturating_add(10);
                     }
+                    KeyCode::Char('e') => {
+                        app.show_exception = !app.show_exception;
+                    }
                     KeyCode::Left | KeyCode::Char('h') => {
                         app.move_up();
                         app.detail_scroll = 0;
+                        app.show_exception = false;
                     }
                     KeyCode::Right | KeyCode::Char('l') => {
                         app.move_down();
                         app.detail_scroll = 0;
+                        app.show_exception = false;
                     }
                     KeyCode::Home | KeyCode::Char('g') => {
                         app.go_to_start();
                         app.detail_scroll = 0;
+                        app.show_exception = false;
                     }
                     KeyCode::End => {
                         app.go_to_end();
                         app.detail_scroll = 0;
+                        app.show_exception = false;
                     }
                     KeyCode::Char('G') => {
                         if key.modifiers.contains(KeyModifiers::SHIFT) {
