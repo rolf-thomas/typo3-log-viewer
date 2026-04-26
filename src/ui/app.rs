@@ -539,7 +539,7 @@ fn render_detail(f: &mut Frame, app: &App, area: Rect) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(" Log Details [ESC: Zurück] ")
+                .title(" Log Details [←→: Eintrag wechseln | ESC: Zurück] ")
                 .border_style(Style::default().fg(Color::Yellow)),
         )
         .wrap(Wrap { trim: false })
@@ -675,6 +675,13 @@ fn render_statusbar(f: &mut Frame, app: &App, area: Rect) {
 
     let left = if app.filter_mode != FilterMode::None {
         "Enter: Bestätigen | ESC: Abbrechen".to_string()
+    } else if app.view == AppView::Detail {
+        let pos = app.list_state.selected().map(|s| s + 1).unwrap_or(0);
+        let total = app.filtered_indices.len();
+        format!(
+            " {}/{} | ↑↓:Scrollen | ←→:Eintrag wechseln | ESC/Enter:Zurück | q:Quit",
+            pos, total
+        )
     } else {
         let pos = app.list_state.selected().map(|s| s + 1).unwrap_or(0);
         let total = app.filtered_indices.len();
@@ -887,6 +894,28 @@ pub fn handle_input(app: &mut App) -> io::Result<()> {
                     }
                     KeyCode::PageDown => {
                         app.detail_scroll = app.detail_scroll.saturating_add(10);
+                    }
+                    KeyCode::Left | KeyCode::Char('h') => {
+                        app.move_up();
+                        app.detail_scroll = 0;
+                    }
+                    KeyCode::Right | KeyCode::Char('l') => {
+                        app.move_down();
+                        app.detail_scroll = 0;
+                    }
+                    KeyCode::Home | KeyCode::Char('g') => {
+                        app.go_to_start();
+                        app.detail_scroll = 0;
+                    }
+                    KeyCode::End => {
+                        app.go_to_end();
+                        app.detail_scroll = 0;
+                    }
+                    KeyCode::Char('G') => {
+                        if key.modifiers.contains(KeyModifiers::SHIFT) {
+                            app.go_to_end();
+                            app.detail_scroll = 0;
+                        }
                     }
                     _ => {}
                 }
