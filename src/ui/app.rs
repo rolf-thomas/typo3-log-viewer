@@ -336,6 +336,13 @@ fn split_message_at_json(message: &str) -> (&str, Option<&str>) {
 
 /// Rendert die Listen-Ansicht
 fn render_list(f: &mut Frame, app: &mut App, area: Rect) {
+    let level_col_width = app
+        .filtered_indices
+        .iter()
+        .map(|&idx| app.entries[idx].level.as_str().len() + 2)
+        .max()
+        .unwrap_or(7);
+
     let items: Vec<ListItem> = app
         .filtered_indices
         .iter()
@@ -344,9 +351,11 @@ fn render_list(f: &mut Frame, app: &mut App, area: Rect) {
             let level_style = Style::default().fg(level_color(entry.level));
 
             // Berechne verfügbare Breite für Nachricht
+            // 2 Trennzeichen " │ " = je 3 Zeichen
             let timestamp = entry.short_timestamp();
-            let level = format!("[{}]", entry.level);
-            let prefix_len = timestamp.len() + level.len() + 3; // +3 für Leerzeichen
+            let level_str = format!("[{}]", entry.level);
+            let level_padded = format!("{:<width$}", level_str, width = level_col_width);
+            let prefix_len = timestamp.len() + level_col_width + 6; // +6 für zwei " │ "
             let msg_width = (area.width as usize).saturating_sub(prefix_len + 4);
 
             let (main_text, dim_rest) = split_message_at_json(&entry.message);
@@ -357,11 +366,12 @@ fn render_list(f: &mut Frame, app: &mut App, area: Rect) {
                 format!("{}...", &main_text[..msg_width.saturating_sub(3)])
             };
 
+            let sep = Style::default().fg(Color::DarkGray);
             let mut spans = vec![
                 Span::styled(timestamp, Style::default().fg(Color::Cyan)),
-                Span::raw(" "),
-                Span::styled(level, level_style.add_modifier(Modifier::BOLD)),
-                Span::raw(" "),
+                Span::styled(" │ ", sep),
+                Span::styled(level_padded, level_style.add_modifier(Modifier::BOLD)),
+                Span::styled(" │ ", sep),
                 Span::raw(main_truncated.clone()),
             ];
 
@@ -439,7 +449,6 @@ fn render_list(f: &mut Frame, app: &mut App, area: Rect) {
         .highlight_style(
             Style::default()
                 .bg(Color::Rgb(50, 70, 110))
-                .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("> ");
