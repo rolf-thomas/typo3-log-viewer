@@ -10,7 +10,7 @@ Interaktiver Terminal-Viewer für TYPO3-Logdateien. Schnelles Navigieren, Filter
 - **Detailansicht** mit vollständiger Nachricht, Request-ID, Component und Pretty-Print JSON
 - **Interaktive Dateiauswahl** bei Verzeichnis-Argument — zurück zur Auswahl per ESC
 - **Live-Reload** — erkennt Änderungen in der Logdatei automatisch
-- **Datumsfilter** — letzter Monat, letzte 6/12 Monate oder eigener Bereich (TT.MM.JJJJ)
+- **Datumsfilter** — heute, letzter Monat, letzte 6/12 Monate oder eigener Bereich (TT.MM.JJJJ)
 - **Request-Fokus** — alle Log-Einträge einer Request-ID auf einen Blick
 - **Selbe Nachrichten** — filtert auf Einträge mit identischer Meldung (vor dem JSON-Block)
 - **Level-Filter** — Error, Warning, Info, Debug per Tastendruck
@@ -49,15 +49,7 @@ Fertige Binaries für alle Plattformen unter [Releases](https://github.com/rolf-
 | `typo3-log-viewer-*-linux-x86_64-musl.tar.gz` | Linux x86_64 (statisch, max. Portabilität) |
 | `typo3-log-viewer-*-linux-arm64.tar.gz` | Linux ARM64 |
 
-```bash
-tar -xzf typo3-log-viewer-*-macos-arm64.tar.gz
-sudo mv typo3-log-viewer /usr/local/bin/
-```
-
-> **macOS Gatekeeper:** Da die Binary nur ad-hoc signiert ist, beim ersten Start einmalig ausführen:
-> ```bash
-> xattr -d com.apple.quarantine /usr/local/bin/typo3-log-viewer
-> ```
+Das Binary `typo3-log-viewer-*-linux-x86_64-musl.tar.gz` kann bei den meisten shared Hosting Anbietern in `~/.local/bin` plaziert von überall aufgerufen werden.
 
 ### Aus dem Quellcode bauen
 
@@ -114,18 +106,23 @@ Ohne Argument wird `./var/log/` verwendet, falls das Verzeichnis existiert.
 |-------|----------|
 | `↑` / `↓`, `j` / `k` | Scrollen |
 | `PgUp` / `PgDown` | Seitenweises Scrollen |
-| `ESC`, `Enter` | Zurück zur Liste |
+| `←` / `→`, `h` / `l` | Vorheriger / nächster Eintrag |
+| `Home` / `g` | Zum ersten Eintrag |
+| `End` / `G` | Zum letzten Eintrag |
+| `e` | Exception-Block ein-/ausblenden |
+| `ESC`, `Enter`, `q` | Zurück zur Liste |
 
 ### Datumsfilter-Menü (`d`)
 
 | Taste | Funktion |
 |-------|----------|
-| `1` | Letzter Kalendermonat |
-| `2` | Letzte 6 Monate |
-| `3` | Letzte 12 Monate |
-| `4` | Eigenen Datumsbereich eingeben (TT.MM.JJJJ) |
+| `1` | Heute |
+| `2` | Letzter Kalendermonat |
+| `3` | Letzte 6 Monate |
+| `4` | Letzte 12 Monate |
+| `5` | Eigenen Datumsbereich eingeben (TT.MM.JJJJ) |
 | `0` | Datumsfilter zurücksetzen |
-| `ESC` | Schließen |
+| `ESC` / `d` | Schließen |
 
 ## Unterstütztes Log-Format
 
