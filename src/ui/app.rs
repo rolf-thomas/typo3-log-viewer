@@ -114,9 +114,14 @@ impl App {
         if self.filtered_indices.is_empty() {
             self.list_state.select(None);
         } else {
-            let current = self.list_state.selected().unwrap_or(0);
-            if current >= self.filtered_indices.len() {
-                self.list_state.select(Some(self.filtered_indices.len() - 1));
+            match self.list_state.selected() {
+                None => {
+                    self.list_state.select(Some(0));
+                }
+                Some(current) if current >= self.filtered_indices.len() => {
+                    self.list_state.select(Some(self.filtered_indices.len() - 1));
+                }
+                _ => {}
             }
         }
     }
@@ -131,20 +136,21 @@ impl App {
 
     /// Navigation: nach oben
     pub fn move_up(&mut self) {
-        if let Some(selected) = self.list_state.selected() {
-            if selected > 0 {
-                self.list_state.select(Some(selected - 1));
-            }
+        if self.filtered_indices.is_empty() {
+            return;
         }
+        let selected = self.list_state.selected().unwrap_or(0);
+        self.list_state.select(Some(selected.saturating_sub(1)));
     }
 
     /// Navigation: nach unten
     pub fn move_down(&mut self) {
-        if let Some(selected) = self.list_state.selected() {
-            if selected < self.filtered_indices.len().saturating_sub(1) {
-                self.list_state.select(Some(selected + 1));
-            }
+        if self.filtered_indices.is_empty() {
+            return;
         }
+        let selected = self.list_state.selected().unwrap_or(0);
+        let next = (selected + 1).min(self.filtered_indices.len() - 1);
+        self.list_state.select(Some(next));
     }
 
     /// Navigation: Seite hoch
