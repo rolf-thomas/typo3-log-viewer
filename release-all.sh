@@ -83,6 +83,10 @@ banner "Release-Tarballs + Checksums"
 banner "Formel patchen"
 ./update-formula.sh
 
+git add Formula/typo3-log-viewer.rb
+git commit -m "Updates version to $VERSION in brew formula"
+git push
+
 # --- GitHub Release ---
 
 banner "GitHub Release anlegen"
