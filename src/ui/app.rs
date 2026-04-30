@@ -61,6 +61,8 @@ pub struct App {
     pub filter_input: String,
     /// Scroll-Position in Detail-Ansicht
     pub detail_scroll: u16,
+    /// Anzahl sichtbarer Zeilen in der Listenansicht (zuletzt gerendert)
+    pub visible_rows: usize,
     /// "exception"-Key in JSON-Detailansicht aufgeklappt
     pub show_exception: bool,
     /// Soll die App beendet werden?
@@ -88,6 +90,7 @@ impl App {
             filter_mode: FilterMode::None,
             filter_input: String::new(),
             detail_scroll: 0,
+            visible_rows: 20,
             show_exception: false,
             should_quit: false,
             should_go_back: false,
@@ -339,6 +342,9 @@ fn split_message_at_json(message: &str) -> (&str, Option<&str>) {
 
 /// Rendert die Listen-Ansicht
 fn render_list(f: &mut Frame, app: &mut App, area: Rect) {
+    // Sichtbare Zeilen: Listenhöhe abzüglich der beiden Rahmenzeilen
+    app.visible_rows = (area.height as usize).saturating_sub(2).max(1);
+
     let level_col_width = app
         .filtered_indices
         .iter()
@@ -1120,10 +1126,10 @@ pub fn handle_input(app: &mut App) -> io::Result<()> {
                     app.move_down();
                 }
                 KeyCode::PageUp => {
-                    app.page_up(20);
+                    app.page_up(app.visible_rows);
                 }
                 KeyCode::PageDown => {
-                    app.page_down(20);
+                    app.page_down(app.visible_rows);
                 }
                 KeyCode::Home | KeyCode::Char('g') => {
                     app.go_to_start();
