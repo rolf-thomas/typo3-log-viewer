@@ -104,17 +104,17 @@ echo "Release: $RELEASE_URL"
 if [ -n "$TAP_PATH" ]; then
   banner "Tap-Repo aktualisieren"
   if [ ! -d "$TAP_PATH" ]; then
-    echo "Warnung: TAP_PATH='$TAP_PATH' existiert nicht — Tap-Push übersprungen."
-  else
-    cp Formula/typo3-log-viewer.rb "$TAP_PATH/Formula/"
-    (
-      cd "$TAP_PATH"
-      git add Formula/typo3-log-viewer.rb
-      git commit -m "Bump typo3-log-viewer to $VERSION"
-      git push
-    )
-    echo "Tap-Repo gepusht."
+    fail "TAP_PATH='$TAP_PATH' existiert nicht."
   fi
+  git -C "$TAP_PATH" pull --ff-only || fail "git pull im Tap-Repo fehlgeschlagen."
+  cp Formula/typo3-log-viewer.rb "$TAP_PATH/Formula/"
+  (
+    cd "$TAP_PATH"
+    git add Formula/typo3-log-viewer.rb
+    git commit -m "Bump typo3-log-viewer to $VERSION"
+    git push
+  )
+  echo "Tap-Repo gepusht."
 fi
 
 # --- Fertig ---
