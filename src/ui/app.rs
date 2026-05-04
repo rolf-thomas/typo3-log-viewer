@@ -1278,3 +1278,401 @@ pub fn run_app<B: ratatui::backend::Backend>(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::DateTime;
+    use std::fs;
+    use std::path::Path;
+
+    fn make_entry(line_number: usize) -> LogEntry {
+        LogEntry {
+            timestamp: DateTime::parse_from_rfc3339("2026-04-02T12:00:00+02:00").unwrap(),
+            level: LogLevel::Info,
+            request_id: Some(format!("req{}", line_number)),
+            component: "Test".to_string(),
+            message: format!("Message {}", line_number),
+            extra_data: None,
+            line_number,
+        }
+    }
+
+    fn make_app(n: usize) -> App {
+        let entries: Vec<LogEntry> = (1..=n).map(make_entry).collect();
+        App::new(LoadResult {
+            entries,
+            file_path: PathBuf::from("/dev/null"),
+            file_size: 0,
+        })
+    }
+
+    fn unique_temp_path(name: &str) -> PathBuf {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "typo3logvtest_{}_{}_{}.log",
+            std::process::id(),
+            name,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        path
+    }
+
+    fn write_log_lines(path: &Path, count: usize) {
+        let mut content = String::new();
+        for i in 1..=count {
+            content.push_str(&format!(
+                "Thu, 02 Apr 2026 12:{:02}:00 +0200 [INFO] request=\"r{}\" component=\"Test\": Entry {}\n",
+                i % 60, i, i
+            ));
+        }
+        fs::write(path, &content).unwrap();
+    }
+
+    fn load_app_from(path: &Path) -> App {
+        let result = crate::loader::load_log_file(path).unwrap();
+        App::new(result)
+    }
+
+    // -- App::new ---------------------------------------------------------
+
+    #[test]
+    fn new_selects_last_entry_and_enables_auto_tail() {
+        let app = make_app(5);
+        assert_eq!(app.list_state.selected(), Some(4));
+        assert!(app.auto_tail);
+    }
+
+    #[test]
+    fn new_seeds_seen_line_numbers_so_existing_entries_are_not_marked_new() {
+        let app = make_app(5);
+        assert!(app.new_line_numbers.is_empty());
+        assert_eq!(app.seen_line_numbers.len(), 5);
+        for ln in 1..=5 {
+            assert!(app.seen_line_numbers.contains(&ln));
+        }
+    }
+
+    #[test]
+    fn new_with_empty_entries_has_no_selection() {
+        let app = App::new(LoadResult {
+            entries: vec![],
+            file_path: PathBuf::from("/dev/null"),
+            file_size: 0,
+        });
+        assert_eq!(app.list_state.selected(), None);
+        assert!(app.seen_line_numbers.is_empty());
+    }
+
+    // -- Navigation: auto_tail-Flag ---------------------------------------
+
+    #[test]
+    fn move_up_disables_auto_tail() {
+        let mut app = make_app(5);
+        app.move_up();
+        assert_eq!(app.list_state.selected(), Some(3));
+        assert!(!app.auto_tail);
+    }
+
+    #[test]
+    fn move_up_at_top_clamps_and_stays_disabled() {
+        let mut app = make_app(5);
+        app.list_state.select(Some(0));
+        app.move_up();
+        assert_eq!(app.list_state.selected(), Some(0));
+        assert!(!app.auto_tail);
+    }
+
+    #[test]
+    fn move_up_on_empty_list_is_noop() {
+        let mut app = make_app(0);
+        app.move_up();
+        assert_eq!(app.list_state.selected(), None);
+    }
+
+    #[test]
+    fn move_down_to_last_enables_auto_tail() {
+        let mut app = make_app(5);
+        app.list_state.select(Some(3));
+        app.auto_tail = false;
+        app.move_down();
+        assert_eq!(app.list_state.selected(), Some(4));
+        assert!(app.auto_tail);
+    }
+
+    #[test]
+    fn move_down_in_middle_disables_auto_tail() {
+        let mut app = make_app(5);
+        app.list_state.select(Some(1));
+        app.auto_tail = true;
+        app.move_down();
+        assert_eq!(app.list_state.selected(), Some(2));
+        assert!(!app.auto_tail);
+    }
+
+    #[test]
+    fn move_down_at_last_keeps_auto_tail() {
+        let mut app = make_app(5);
+        app.list_state.select(Some(4));
+        app.auto_tail = true;
+        app.move_down();
+        assert_eq!(app.list_state.selected(), Some(4));
+        assert!(app.auto_tail);
+    }
+
+    #[test]
+    fn page_up_disables_auto_tail() {
+        let mut app = make_app(20);
+        app.page_up(5);
+        assert_eq!(app.list_state.selected(), Some(14));
+        assert!(!app.auto_tail);
+    }
+
+    #[test]
+    fn page_up_clamps_at_zero() {
+        let mut app = make_app(20);
+        app.list_state.select(Some(3));
+        app.page_up(10);
+        assert_eq!(app.list_state.selected(), Some(0));
+        assert!(!app.auto_tail);
+    }
+
+    #[test]
+    fn page_down_to_last_enables_auto_tail() {
+        let mut app = make_app(20);
+        app.list_state.select(Some(15));
+        app.auto_tail = false;
+        app.page_down(10);
+        assert_eq!(app.list_state.selected(), Some(19));
+        assert!(app.auto_tail);
+    }
+
+    #[test]
+    fn page_down_in_middle_disables_auto_tail() {
+        let mut app = make_app(20);
+        app.list_state.select(Some(0));
+        app.auto_tail = true;
+        app.page_down(5);
+        assert_eq!(app.list_state.selected(), Some(5));
+        assert!(!app.auto_tail);
+    }
+
+    #[test]
+    fn go_to_start_disables_auto_tail() {
+        let mut app = make_app(5);
+        assert!(app.auto_tail);
+        app.go_to_start();
+        assert_eq!(app.list_state.selected(), Some(0));
+        assert!(!app.auto_tail);
+    }
+
+    #[test]
+    fn go_to_end_enables_auto_tail() {
+        let mut app = make_app(5);
+        app.go_to_start();
+        assert!(!app.auto_tail);
+        app.go_to_end();
+        assert_eq!(app.list_state.selected(), Some(4));
+        assert!(app.auto_tail);
+    }
+
+    #[test]
+    fn go_to_start_on_empty_list_is_noop() {
+        let mut app = make_app(0);
+        app.go_to_start();
+        assert_eq!(app.list_state.selected(), None);
+    }
+
+    #[test]
+    fn go_to_end_on_empty_list_is_noop() {
+        let mut app = make_app(0);
+        app.go_to_end();
+        assert_eq!(app.list_state.selected(), None);
+    }
+
+    #[test]
+    fn set_message_focus_disables_auto_tail() {
+        let mut app = make_app(3);
+        app.auto_tail = true;
+        app.set_message_focus();
+        assert!(!app.auto_tail);
+        assert_eq!(app.list_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn set_request_focus_disables_auto_tail() {
+        let mut app = make_app(3);
+        app.auto_tail = true;
+        app.set_request_focus();
+        assert!(!app.auto_tail);
+        assert_eq!(app.list_state.selected(), Some(0));
+    }
+
+    // -- reload_if_changed ------------------------------------------------
+
+    #[test]
+    fn reload_returns_false_when_size_unchanged() {
+        let path = unique_temp_path("nochange");
+        write_log_lines(&path, 3);
+        let mut app = load_app_from(&path);
+        let changed = app.reload_if_changed().unwrap();
+        assert!(!changed);
+        assert!(app.new_line_numbers.is_empty());
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn reload_marks_appended_entries_as_new() {
+        let path = unique_temp_path("appended");
+        write_log_lines(&path, 4);
+        let mut app = load_app_from(&path);
+        assert!(app.new_line_numbers.is_empty());
+
+        write_log_lines(&path, 7);
+        let changed = app.reload_if_changed().unwrap();
+
+        assert!(changed);
+        assert_eq!(app.entries.len(), 7);
+        assert_eq!(app.new_line_numbers.len(), 3);
+        for ln in 5..=7 {
+            assert!(app.new_line_numbers.contains(&ln), "line {} should be new", ln);
+        }
+        for ln in 1..=4 {
+            assert!(!app.new_line_numbers.contains(&ln), "line {} should not be new", ln);
+        }
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn reload_accumulates_new_entries_across_multiple_reloads() {
+        let path = unique_temp_path("accumulate");
+        write_log_lines(&path, 2);
+        let mut app = load_app_from(&path);
+
+        write_log_lines(&path, 4);
+        app.reload_if_changed().unwrap();
+        write_log_lines(&path, 6);
+        app.reload_if_changed().unwrap();
+
+        // line_numbers 3..=6 should all be marked as new
+        assert_eq!(app.new_line_numbers.len(), 4);
+        for ln in 3..=6 {
+            assert!(app.new_line_numbers.contains(&ln));
+        }
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn reload_resets_new_marker_on_log_rotation() {
+        let path = unique_temp_path("rotation");
+        write_log_lines(&path, 10);
+        let mut app = load_app_from(&path);
+        let prev_size = app.file_size;
+
+        // Datei schrumpft (simulierte Rotation)
+        write_log_lines(&path, 2);
+        let new_size = fs::metadata(&path).unwrap().len();
+        assert!(new_size < prev_size);
+
+        app.reload_if_changed().unwrap();
+
+        assert!(app.new_line_numbers.is_empty());
+        assert_eq!(app.seen_line_numbers.len(), 2);
+        assert_eq!(app.entries.len(), 2);
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn reload_in_tail_mode_advances_offset_by_added_count() {
+        let path = unique_temp_path("scroll_tail");
+        write_log_lines(&path, 5);
+        let mut app = load_app_from(&path);
+        app.visible_rows = 5;
+        *app.list_state.offset_mut() = 0;
+        assert_eq!(app.list_state.selected(), Some(4));
+        assert!(app.auto_tail);
+
+        // 2 neue Einträge → Offset wandert von 0 auf 2
+        write_log_lines(&path, 7);
+        app.reload_if_changed().unwrap();
+
+        assert_eq!(app.list_state.selected(), Some(4));
+        assert_eq!(app.list_state.offset(), 2);
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn reload_caps_offset_at_selected_position() {
+        let path = unique_temp_path("scroll_cap");
+        write_log_lines(&path, 5);
+        let mut app = load_app_from(&path);
+        app.visible_rows = 5;
+        *app.list_state.offset_mut() = 0;
+        assert_eq!(app.list_state.selected(), Some(4));
+
+        // Viele neue Einträge auf einen Schlag: Offset würde 0 + 8 = 8
+        // ergeben, soll aber bei sel=4 abgeschnitten werden.
+        write_log_lines(&path, 13);
+        app.reload_if_changed().unwrap();
+
+        assert_eq!(app.list_state.selected(), Some(4));
+        assert_eq!(app.list_state.offset(), 4);
+
+        // Weitere Reloads dürfen den Offset nicht weiter anheben
+        write_log_lines(&path, 25);
+        app.reload_if_changed().unwrap();
+        assert_eq!(app.list_state.offset(), 4);
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn reload_does_not_scroll_when_auto_tail_disabled() {
+        let path = unique_temp_path("no_scroll");
+        write_log_lines(&path, 10);
+        let mut app = load_app_from(&path);
+        app.visible_rows = 5;
+
+        app.go_to_start();
+        assert!(!app.auto_tail);
+        *app.list_state.offset_mut() = 0;
+
+        write_log_lines(&path, 15);
+        app.reload_if_changed().unwrap();
+
+        assert_eq!(app.list_state.selected(), Some(0));
+        assert_eq!(app.list_state.offset(), 0);
+        // Trotzdem werden neue Einträge als "neu" markiert
+        assert_eq!(app.new_line_numbers.len(), 5);
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn reload_preserves_selection_via_line_number() {
+        let path = unique_temp_path("preserve_sel");
+        write_log_lines(&path, 10);
+        let mut app = load_app_from(&path);
+        app.list_state.select(Some(3)); // line_number 4
+        app.auto_tail = false;
+
+        write_log_lines(&path, 15);
+        app.reload_if_changed().unwrap();
+
+        // Eintrag mit line_number 4 ist weiterhin an Position 3
+        assert_eq!(app.list_state.selected(), Some(3));
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn reload_recovers_when_file_temporarily_missing() {
+        // Existiert die Datei nicht, soll reload_if_changed nicht panicen
+        let path = unique_temp_path("missing");
+        write_log_lines(&path, 3);
+        let mut app = load_app_from(&path);
+        fs::remove_file(&path).unwrap();
+        let changed = app.reload_if_changed().unwrap();
+        assert!(!changed);
+    }
+}
