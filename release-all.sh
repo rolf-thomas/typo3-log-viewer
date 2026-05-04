@@ -45,6 +45,12 @@ banner "Voraussetzungen prüfen"
 command -v gh >/dev/null 2>&1 || fail "gh CLI nicht installiert (brew install gh)."
 gh auth status >/dev/null 2>&1 || fail "gh nicht authentifiziert (gh auth login)."
 
+if [ -n "$TAP_PATH" ]; then
+  [ -d "$TAP_PATH" ] || fail "TAP_PATH='$TAP_PATH' existiert nicht."
+  [ -d "$TAP_PATH/Formula" ] || fail "TAP_PATH='$TAP_PATH' enthält kein Formula/-Verzeichnis."
+  [ -d "$TAP_PATH/.git" ] || fail "TAP_PATH='$TAP_PATH' ist kein Git-Repo."
+fi
+
 VERSION=$(awk -F'"' '/^version/ { print $2; exit }' Cargo.toml)
 [ -n "$VERSION" ] || fail "Konnte version aus Cargo.toml nicht lesen."
 
@@ -103,9 +109,6 @@ echo "Release: $RELEASE_URL"
 
 if [ -n "$TAP_PATH" ]; then
   banner "Tap-Repo aktualisieren"
-  if [ ! -d "$TAP_PATH" ]; then
-    fail "TAP_PATH='$TAP_PATH' existiert nicht."
-  fi
   git -C "$TAP_PATH" pull --ff-only || fail "git pull im Tap-Repo fehlgeschlagen."
   cp Formula/typo3-log-viewer.rb "$TAP_PATH/Formula/"
   (
