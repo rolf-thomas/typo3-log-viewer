@@ -13,6 +13,7 @@ use ratatui::{
     },
     Frame,
 };
+use std::collections::HashSet;
 use std::io;
 use std::path::PathBuf;
 
@@ -73,11 +74,21 @@ pub struct App {
     pub has_file_selector: bool,
     /// Zwischenspeicher für Von-Datum bei der Bereichseingabe
     date_from_input: String,
+    /// Zeilennummern von Einträgen, die seit dem Start neu hinzugekommen sind
+    pub new_line_numbers: HashSet<usize>,
+    /// Bereits gesehene Zeilennummern (für Diff-Berechnung beim Reload)
+    seen_line_numbers: HashSet<usize>,
+    /// Tail-Modus aktiv: bei neuen Einträgen wird automatisch nachgescrollt,
+    /// solange die markierte Zeile nicht am oberen Fensterrand angekommen ist.
+    /// Wird durch manuelle Navigation deaktiviert und durch End reaktiviert.
+    auto_tail: bool,
 }
 
 impl App {
     pub fn new(result: LoadResult) -> Self {
         let filtered_indices: Vec<usize> = (0..result.entries.len()).collect();
+        let seen_line_numbers: HashSet<usize> =
+            result.entries.iter().map(|e| e.line_number).collect();
 
         let mut app = App {
             entries: result.entries,
@@ -96,6 +107,9 @@ impl App {
             should_go_back: false,
             has_file_selector: false,
             date_from_input: String::new(),
+            new_line_numbers: HashSet::new(),
+            seen_line_numbers,
+            auto_tail: true,
         };
 
         // Wähle den letzten (neuesten) Eintrag
@@ -147,6 +161,7 @@ impl App {
         }
         let selected = self.list_state.selected().unwrap_or(0);
         self.list_state.select(Some(selected.saturating_sub(1)));
+        self.auto_tail = false;
     }
 
     /// Navigation: nach unten
@@ -157,6 +172,7 @@ impl App {
         let selected = self.list_state.selected().unwrap_or(0);
         let next = (selected + 1).min(self.filtered_indices.len() - 1);
         self.list_state.select(Some(next));
+        self.auto_tail = next + 1 == self.filtered_indices.len();
     }
 
     /// Navigation: Seite hoch
@@ -164,6 +180,7 @@ impl App {
         if let Some(selected) = self.list_state.selected() {
             let new_selected = selected.saturating_sub(page_size);
             self.list_state.select(Some(new_selected));
+            self.auto_tail = false;
         }
     }
 
@@ -172,6 +189,7 @@ impl App {
         if let Some(selected) = self.list_state.selected() {
             let new_selected = (selected + page_size).min(self.filtered_indices.len().saturating_sub(1));
             self.list_state.select(Some(new_selected));
+            self.auto_tail = new_selected + 1 == self.filtered_indices.len();
         }
     }
 
@@ -179,6 +197,7 @@ impl App {
     pub fn go_to_start(&mut self) {
         if !self.filtered_indices.is_empty() {
             self.list_state.select(Some(0));
+            self.auto_tail = false;
         }
     }
 
@@ -186,6 +205,7 @@ impl App {
     pub fn go_to_end(&mut self) {
         if !self.filtered_indices.is_empty() {
             self.list_state.select(Some(self.filtered_indices.len() - 1));
+            self.auto_tail = true;
         }
     }
 
@@ -244,6 +264,7 @@ impl App {
                 self.filter.message_prefix = Some(prefix);
                 self.apply_filter();
                 self.list_state.select(Some(0));
+                self.auto_tail = false;
             }
         }
     }
@@ -255,6 +276,7 @@ impl App {
             self.apply_filter();
             // Selektion auf ersten Eintrag des Requests setzen
             self.list_state.select(Some(0));
+            self.auto_tail = false;
         }
     }
 
@@ -275,9 +297,35 @@ impl App {
         // Aktuelle Auswahl per stabilem Kriterium (line_number) merken
         let selected_line_number = self.selected_entry().map(|e| e.line_number);
 
+        // Tail-Modus und vorherige Listenlänge merken, um danach
+        // ggf. weiterzuscrollen
+        let was_tailing = self.auto_tail;
+        let prev_filtered_len = self.filtered_indices.len();
+        let file_shrunk = current_size < self.file_size;
+
         // Datei neu laden und parsen
         let content = std::fs::read_to_string(&self.file_path)?;
-        self.entries = crate::parser::parse_log_content(&content);
+        let new_entries = crate::parser::parse_log_content(&content);
+
+        // Neue Einträge ermitteln: bei Logrotation (Datei geschrumpft)
+        // alten Stand verwerfen, damit erneut auftretende Zeilennummern
+        // nicht fälschlich als bekannt durchrutschen.
+        if file_shrunk {
+            self.seen_line_numbers.clear();
+            self.new_line_numbers.clear();
+            for entry in &new_entries {
+                self.seen_line_numbers.insert(entry.line_number);
+            }
+        } else {
+            for entry in &new_entries {
+                if !self.seen_line_numbers.contains(&entry.line_number) {
+                    self.seen_line_numbers.insert(entry.line_number);
+                    self.new_line_numbers.insert(entry.line_number);
+                }
+            }
+        }
+
+        self.entries = new_entries;
         self.file_size = current_size;
         self.apply_filter();
 
@@ -292,6 +340,19 @@ impl App {
             }
             // Falls die alte Zeile nicht mehr existiert (z.B. Rotation),
             // behält apply_filter eine sinnvolle Position bei.
+        }
+
+        // Solange wir im Tail-Modus sind, scrollen wir bei neuen Einträgen
+        // automatisch weiter. Der Offset wächst um die Anzahl neuer Zeilen,
+        // aber höchstens bis die markierte Zeile ganz oben im Fenster steht.
+        let new_filtered_len = self.filtered_indices.len();
+        if was_tailing && new_filtered_len > prev_filtered_len {
+            let added = new_filtered_len - prev_filtered_len;
+            if let Some(sel) = self.list_state.selected() {
+                let current_offset = self.list_state.offset();
+                let target_offset = (current_offset + added).min(sel);
+                *self.list_state.offset_mut() = target_offset;
+            }
         }
 
         Ok(true)
@@ -399,7 +460,11 @@ fn render_list(f: &mut Frame, app: &mut App, area: Rect) {
                 }
             }
 
-            ListItem::new(Line::from(spans))
+            let mut item = ListItem::new(Line::from(spans));
+            if app.new_line_numbers.contains(&entry.line_number) {
+                item = item.style(Style::default().bg(Color::Rgb(20, 90, 40)));
+            }
+            item
         })
         .collect();
 
