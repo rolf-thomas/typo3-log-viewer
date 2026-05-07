@@ -50,6 +50,7 @@ struct FileInfo {
     path: PathBuf,
     name: String,
     size: String,
+    is_empty: bool,
 }
 
 /// Interaktive Dateiauswahl mit TUI
@@ -63,13 +64,17 @@ fn select_file_interactive(files: &[PathBuf], preselect: Option<usize>) -> io::R
                 .unwrap_or_default()
                 .to_string_lossy()
                 .to_string();
-            let size = std::fs::metadata(path)
-                .map(|m| format_file_size(m.len()))
-                .unwrap_or_else(|_| "?".to_string());
+            let metadata = std::fs::metadata(path).ok();
+            let bytes = metadata.as_ref().map(|m| m.len());
+            let size = bytes
+                .map(format_file_size)
+                .unwrap_or_else(|| "?".to_string());
+            let is_empty = bytes == Some(0);
             FileInfo {
                 path: path.clone(),
                 name,
                 size,
+                is_empty,
             }
         })
         .collect();
@@ -104,6 +109,9 @@ fn select_file_interactive(files: &[PathBuf], preselect: Option<usize>) -> io::R
                     }
                     KeyCode::Enter => {
                         if let Some(idx) = list_state.selected() {
+                            if file_infos[idx].is_empty {
+                                continue;
+                            }
                             selected_file = Some(file_infos[idx].path.clone());
                         }
                         break;
