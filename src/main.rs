@@ -198,7 +198,20 @@ fn render_file_selector(f: &mut Frame, files: &[FileInfo], list_state: &mut List
     f.render_widget(help, chunks[1]);
 }
 
+/// Setzt einen Panic-Hook, der das Terminal vor der Panic-Ausgabe zurücksetzt,
+/// damit die Shell nach einem Crash nicht im Alternate-Screen / Raw-Mode hängt.
+fn install_panic_hook() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = disable_raw_mode();
+        let _ = execute!(stdout(), LeaveAlternateScreen);
+        default_hook(info);
+    }));
+}
+
 fn main() {
+    install_panic_hook();
+
     let args: Vec<String> = std::env::args().collect();
 
     // Hilfe / Version anzeigen

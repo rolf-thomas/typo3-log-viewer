@@ -391,6 +391,18 @@ fn level_color(level: LogLevel) -> Color {
     }
 }
 
+/// Schneidet `s` auf höchstens `max_bytes` Bytes ab, ohne ein UTF-8-Zeichen zu zerteilen.
+fn truncate_at_char_boundary(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 /// Teilt eine Nachricht am " - {" oder " - [" Trenner in (Haupttext, Option<Rest>)
 fn split_message_at_json(message: &str) -> (&str, Option<&str>) {
     for sep in [" - {", " - ["] {
@@ -433,7 +445,10 @@ fn render_list(f: &mut Frame, app: &mut App, area: Rect) {
             let main_truncated = if main_text.len() <= msg_width {
                 main_text.to_string()
             } else {
-                format!("{}...", &main_text[..msg_width.saturating_sub(3)])
+                format!(
+                    "{}...",
+                    truncate_at_char_boundary(main_text, msg_width.saturating_sub(3))
+                )
             };
 
             let sep = Style::default().fg(Color::DarkGray);
@@ -451,7 +466,10 @@ fn render_list(f: &mut Frame, app: &mut App, area: Rect) {
                     let rest_truncated = if rest.len() <= remaining {
                         rest.to_string()
                     } else {
-                        format!("{}...", &rest[..remaining.saturating_sub(3)])
+                        format!(
+                            "{}...",
+                            truncate_at_char_boundary(rest, remaining.saturating_sub(3))
+                        )
                     };
                     spans.push(Span::styled(
                         rest_truncated,
@@ -476,7 +494,11 @@ fn render_list(f: &mut Frame, app: &mut App, area: Rect) {
             app.filtered_indices.len()
         )
     } else if let Some(prefix) = &app.filter.message_prefix {
-        let short = if prefix.len() > 40 { format!("{}…", &prefix[..40]) } else { prefix.clone() };
+        let short = if prefix.len() > 40 {
+            format!("{}…", truncate_at_char_boundary(prefix, 40))
+        } else {
+            prefix.clone()
+        };
         format!(
             " [Gleiche: \"{}\" — {} Einträge]",
             short,
