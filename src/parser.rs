@@ -2,6 +2,7 @@ use crate::model::{LogEntry, LogLevel};
 use chrono::DateTime;
 use once_cell::sync::Lazy;
 use regex::Regex;
+use std::io::{self, BufRead};
 
 /// Regex für das TYPO3 Log-Format:
 /// DATUM [LEVEL] request="REQUEST_ID" component="COMPONENT": NACHRICHT
@@ -51,64 +52,150 @@ pub fn parse_log_line(line: &str, line_number: usize) -> Option<LogEntry> {
     })
 }
 
-/// Parst mehrere Zeilen und kombiniert mehrzeilige Einträge
-pub fn parse_log_content(content: &str) -> Vec<LogEntry> {
-    let mut entries = Vec::new();
-    let lines: Vec<&str> = content.lines().collect();
-    let mut i = 0;
+/// Streaming-Parser-Zustand. Erlaubt es, eine Log-Datei häppchenweise
+/// (z.B. zeilenweise via `BufReader`) zu parsen, ohne den gesamten Inhalt
+/// im Speicher halten zu müssen. Gleichzeitig kann der Zustand zwischen
+/// inkrementellen Reload-Aufrufen erhalten bleiben.
+pub struct StreamParser {
+    /// Bisher konsumierte Zeilen (1-basierte nächste Zeilennummer = lines_consumed + 1)
+    lines_consumed: usize,
+    /// Aktuell offener Eintrag, dem noch Extra-Zeilen folgen können
+    pending: Option<LogEntry>,
+    /// Gesammelte Extra-Zeilen für `pending`
+    extras: Vec<String>,
+}
 
-    while i < lines.len() {
-        let line = lines[i];
-
-        // Leere Zeilen überspringen
-        if line.trim().is_empty() {
-            i += 1;
-            continue;
-        }
-
-        // Versuche die Zeile als Log-Eintrag zu parsen
-        if let Some(mut entry) = parse_log_line(line, i + 1) {
-            // Sammle zusätzliche Zeilen (JSON-Daten etc.)
-            let mut extra_lines = Vec::new();
-            let mut j = i + 1;
-
-            while j < lines.len() {
-                let next_line = lines[j];
-
-                // Wenn die nächste Zeile ein neuer Log-Eintrag ist, stoppen
-                if LOG_REGEX.is_match(next_line) {
-                    break;
-                }
-
-                // Leere Zeilen am Anfang überspringen, aber nicht komplett ignorieren
-                if !next_line.trim().is_empty() || !extra_lines.is_empty() {
-                    extra_lines.push(next_line);
-                }
-
-                j += 1;
-            }
-
-            // Extra-Daten hinzufügen falls vorhanden
-            if !extra_lines.is_empty() {
-                // Entferne trailing leere Zeilen
-                while extra_lines.last().map(|s| s.trim().is_empty()).unwrap_or(false) {
-                    extra_lines.pop();
-                }
-
-                if !extra_lines.is_empty() {
-                    entry.extra_data = Some(extra_lines.join("\n"));
-                }
-            }
-
-            entries.push(entry);
-            i = j;
-        } else {
-            // Zeile konnte nicht geparst werden, überspringen
-            i += 1;
+impl StreamParser {
+    /// Erzeugt einen Parser, der nach `lines_offset` Zeilen weitermacht
+    /// (0 für eine frische Datei). Wird für inkrementelle Reloads benötigt,
+    /// damit die `line_number` in `LogEntry` mit der tatsächlichen Position
+    /// in der Datei übereinstimmt.
+    pub fn with_line_offset(lines_offset: usize) -> Self {
+        Self {
+            lines_consumed: lines_offset,
+            pending: None,
+            extras: Vec::new(),
         }
     }
 
-    entries
+    pub fn lines_consumed(&self) -> usize {
+        self.lines_consumed
+    }
+
+    /// Verarbeitet eine einzelne Zeile (ohne Zeilenumbruch).
+    /// Liefert ggf. einen abgeschlossenen Eintrag zurück, wenn diese
+    /// Zeile einen neuen Eintrag startet und der vorherige damit fertig ist.
+    pub fn feed_line(&mut self, line: &str) -> Option<LogEntry> {
+        self.lines_consumed += 1;
+        let line_number = self.lines_consumed;
+
+        // Versuch: ist das eine neue Eintrags-Header-Zeile?
+        if let Some(new_entry) = parse_log_line(line, line_number) {
+            // Vorherigen Eintrag abschließen
+            let finished = self.finalize_pending();
+            self.pending = Some(new_entry);
+            self.extras.clear();
+            return finished;
+        }
+
+        // Keine Header-Zeile: gehört entweder zum aktuellen Eintrag (Extra-Daten)
+        // oder ist eine verwaiste Zeile (kein offener Eintrag).
+        if self.pending.is_some() {
+            // Führende Leerzeilen überspringen, sonst sammeln
+            if !line.trim().is_empty() || !self.extras.is_empty() {
+                self.extras.push(line.to_string());
+            }
+        }
+        // Verwaiste Zeile ohne offenen Eintrag → ignorieren (wie zuvor).
+        None
+    }
+
+    /// Schließt den letzten offenen Eintrag ab und liefert ihn zurück.
+    /// Sollte am Ende des Streams (EOF) aufgerufen werden.
+    pub fn finish(mut self) -> Option<LogEntry> {
+        self.finalize_pending()
+    }
+
+    fn finalize_pending(&mut self) -> Option<LogEntry> {
+        let mut entry = self.pending.take()?;
+
+        // Trailing leere Zeilen entfernen
+        while self
+            .extras
+            .last()
+            .map(|s| s.trim().is_empty())
+            .unwrap_or(false)
+        {
+            self.extras.pop();
+        }
+
+        if !self.extras.is_empty() {
+            entry.extra_data = Some(std::mem::take(&mut self.extras).join("\n"));
+        } else {
+            self.extras.clear();
+        }
+
+        Some(entry)
+    }
+}
+
+/// Streaming-Variante: liest aus einem `BufRead` zeilenweise und parst
+/// dabei sukzessive Einträge. Die Datei wird nicht komplett in den Speicher geladen.
+///
+/// `line_offset` gibt an, wie viele Zeilen vor dem aktuellen Reader-Anfang
+/// bereits konsumiert wurden (0 für eine frische Datei). Dadurch bleibt
+/// `LogEntry::line_number` über inkrementelle Reloads hinweg konsistent.
+///
+/// Liefert die geparsten Einträge sowie die Gesamtzahl der konsumierten Zeilen
+/// (inkl. `line_offset`).
+pub fn parse_log_stream<R: BufRead>(
+    mut reader: R,
+    line_offset: usize,
+) -> io::Result<(Vec<LogEntry>, usize)> {
+    let mut parser = StreamParser::with_line_offset(line_offset);
+    let mut entries = Vec::new();
+    let mut buf = String::new();
+
+    loop {
+        buf.clear();
+        let n = reader.read_line(&mut buf)?;
+        if n == 0 {
+            break; // EOF
+        }
+        // `read_line` liefert den abschließenden Zeilenumbruch mit;
+        // `lines()` (das vorher genutzt wurde) tut das nicht. Konsistenz herstellen.
+        let trimmed = strip_line_ending(&buf);
+        if let Some(entry) = parser.feed_line(trimmed) {
+            entries.push(entry);
+        }
+    }
+
+    let lines_consumed = parser.lines_consumed();
+    if let Some(last) = parser.finish() {
+        entries.push(last);
+    }
+
+    Ok((entries, lines_consumed))
+}
+
+fn strip_line_ending(s: &str) -> &str {
+    if let Some(stripped) = s.strip_suffix('\n') {
+        stripped.strip_suffix('\r').unwrap_or(stripped)
+    } else {
+        s
+    }
+}
+
+/// Parst mehrere Zeilen und kombiniert mehrzeilige Einträge.
+/// Nutzt intern den Streaming-Parser, akzeptiert aber bequem einen `&str`.
+/// (Wird im Binary nicht verwendet — nur als Convenience für Tests / Aufrufer
+/// mit bereits geladenem String.)
+#[allow(dead_code)]
+pub fn parse_log_content(content: &str) -> Vec<LogEntry> {
+    let cursor = io::Cursor::new(content.as_bytes());
+    parse_log_stream(cursor, 0)
+        .map(|(entries, _)| entries)
+        .unwrap_or_default()
 }
 
 /// Versucht JSON in der Nachricht zu erkennen und zu extrahieren

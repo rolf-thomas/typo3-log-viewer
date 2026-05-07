@@ -52,6 +52,9 @@ pub struct App {
     /// Dateiinformationen
     pub file_path: PathBuf,
     pub file_size: u64,
+    /// Anzahl der bisher konsumierten Zeilen aus der Datei.
+    /// Wird für inkrementelles Tail-Reload benötigt.
+    pub lines_read: usize,
     /// Listen-Zustand
     pub list_state: ListState,
     /// Aktuelle Ansicht
@@ -96,6 +99,7 @@ impl App {
             filter: LogFilter::default(),
             file_path: result.file_path,
             file_size: result.file_size,
+            lines_read: result.lines_read,
             list_state: ListState::default(),
             view: AppView::List,
             filter_mode: FilterMode::None,
@@ -280,10 +284,19 @@ impl App {
         }
     }
 
-    /// Prüft, ob sich die Datei geändert hat, und lädt sie neu.
+    /// Prüft, ob sich die Datei geändert hat, und lädt sie ggf. neu.
+    ///
+    /// Bei wachsenden Dateien wird inkrementell gelesen: nur die seit dem
+    /// letzten Stand neu hinzugekommenen Bytes werden geparst und an die
+    /// vorhandene Liste angehängt. Bei geschrumpfter Datei (Truncate /
+    /// Logrotation) wird ein voller Reload durchgeführt.
+    ///
     /// Die aktuelle Selektion wird per line_number wiederhergestellt,
     /// sodass neue Einträge die Auswahl nicht verändern.
     pub fn reload_if_changed(&mut self) -> io::Result<bool> {
+        use std::fs::File;
+        use std::io::{BufReader, Seek, SeekFrom};
+
         let metadata = match std::fs::metadata(&self.file_path) {
             Ok(m) => m,
             Err(_) => return Ok(false), // Datei kurzzeitig nicht verfügbar — nächster Tick
@@ -303,29 +316,38 @@ impl App {
         let prev_filtered_len = self.filtered_indices.len();
         let file_shrunk = current_size < self.file_size;
 
-        // Datei neu laden und parsen
-        let content = std::fs::read_to_string(&self.file_path)?;
-        let new_entries = crate::parser::parse_log_content(&content);
-
-        // Neue Einträge ermitteln: bei Logrotation (Datei geschrumpft)
-        // alten Stand verwerfen, damit erneut auftretende Zeilennummern
-        // nicht fälschlich als bekannt durchrutschen.
         if file_shrunk {
+            // Truncate / Logrotation: kompletter Reload, alten Stand verwerfen.
+            let file = File::open(&self.file_path)?;
+            let reader = BufReader::new(file);
+            let (new_entries, lines_read) = crate::parser::parse_log_stream(reader, 0)?;
+
             self.seen_line_numbers.clear();
             self.new_line_numbers.clear();
             for entry in &new_entries {
                 self.seen_line_numbers.insert(entry.line_number);
             }
+
+            self.entries = new_entries;
+            self.lines_read = lines_read;
         } else {
-            for entry in &new_entries {
-                if !self.seen_line_numbers.contains(&entry.line_number) {
-                    self.seen_line_numbers.insert(entry.line_number);
+            // Inkrementelles Tail: nur die neu angehängten Bytes lesen.
+            let mut file = File::open(&self.file_path)?;
+            file.seek(SeekFrom::Start(self.file_size))?;
+            let reader = BufReader::new(file);
+            let (appended_entries, lines_read) =
+                crate::parser::parse_log_stream(reader, self.lines_read)?;
+
+            for entry in &appended_entries {
+                if self.seen_line_numbers.insert(entry.line_number) {
                     self.new_line_numbers.insert(entry.line_number);
                 }
             }
+
+            self.entries.extend(appended_entries);
+            self.lines_read = lines_read;
         }
 
-        self.entries = new_entries;
         self.file_size = current_size;
         self.apply_filter();
 
@@ -1326,6 +1348,7 @@ mod tests {
             entries,
             file_path: PathBuf::from("/dev/null"),
             file_size: 0,
+            lines_read: 0,
         })
     }
 
@@ -1384,6 +1407,7 @@ mod tests {
             entries: vec![],
             file_path: PathBuf::from("/dev/null"),
             file_size: 0,
+            lines_read: 0,
         });
         assert_eq!(app.list_state.selected(), None);
         assert!(app.seen_line_numbers.is_empty());

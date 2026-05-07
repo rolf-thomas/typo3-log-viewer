@@ -1,7 +1,7 @@
 use crate::model::LogEntry;
-use crate::parser::parse_log_content;
-use std::fs;
-use std::io;
+use crate::parser::parse_log_stream;
+use std::fs::{self, File};
+use std::io::{self, BufReader};
 use std::path::{Path, PathBuf};
 
 /// Ergebnis des Ladevorgangs
@@ -9,20 +9,26 @@ pub struct LoadResult {
     pub entries: Vec<LogEntry>,
     pub file_path: PathBuf,
     pub file_size: u64,
+    /// Gesamtzahl der bisher konsumierten Zeilen.
+    /// Wird für inkrementelle Reloads benötigt, damit die `line_number`
+    /// neuer Einträge weiterhin der tatsächlichen Position in der Datei entspricht.
+    pub lines_read: usize,
 }
 
-/// Lädt eine Log-Datei und parst deren Inhalt
+/// Lädt eine Log-Datei und parst deren Inhalt zeilenweise (streaming),
+/// ohne den gesamten Dateiinhalt vorab in den Speicher zu laden.
 pub fn load_log_file(path: &Path) -> io::Result<LoadResult> {
-    let metadata = fs::metadata(path)?;
-    let file_size = metadata.len();
+    let file = File::open(path)?;
+    let file_size = file.metadata()?.len();
 
-    let content = fs::read_to_string(path)?;
-    let entries = parse_log_content(&content);
+    let reader = BufReader::new(file);
+    let (entries, lines_read) = parse_log_stream(reader, 0)?;
 
     Ok(LoadResult {
         entries,
         file_path: path.to_path_buf(),
         file_size,
+        lines_read,
     })
 }
 
