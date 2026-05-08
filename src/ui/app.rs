@@ -27,6 +27,8 @@ pub enum AppView {
     Filter,
     Help,
     DateMenu,
+    /// Bestätigungs-Dialog vor dem Leeren der Log-Datei
+    ConfirmTruncate,
 }
 
 /// Input-Modus für Filter
@@ -233,6 +235,34 @@ impl App {
         match crate::clipboard::copy_to_clipboard(&text) {
             Ok(()) => self.set_status_message("Inhalt in die Zwischenablage kopiert"),
             Err(e) => self.set_status_message(&format!("Kopieren fehlgeschlagen: {}", e)),
+        }
+    }
+
+    /// Schreibt die Log-Datei auf 0 Byte und setzt den In-Memory-Stand
+    /// entsprechend zurück. Wird durch den Bestätigungs-Dialog ausgelöst.
+    pub fn truncate_log_file(&mut self) {
+        use std::fs::OpenOptions;
+
+        match OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(&self.file_path)
+        {
+            Ok(_) => {
+                self.entries.clear();
+                self.filtered_indices.clear();
+                self.seen_line_numbers.clear();
+                self.new_line_numbers.clear();
+                self.list_state.select(None);
+                *self.list_state.offset_mut() = 0;
+                self.file_size = 0;
+                self.lines_read = 0;
+                self.auto_tail = true;
+                self.set_status_message("Log-Datei geleert");
+            }
+            Err(e) => {
+                self.set_status_message(&format!("Leeren fehlgeschlagen: {}", e));
+            }
         }
     }
 
@@ -912,6 +942,7 @@ fn render_help(f: &mut Frame, area: Rect) {
         Line::from(""),
         Line::from(Span::styled("Allgemein:", Style::default().add_modifier(Modifier::BOLD))),
         Line::from("  ?          Diese Hilfe"),
+        Line::from("  Backspace  Log-Datei leeren (mit Bestätigung)"),
         Line::from("  q/ESC      Beenden / Zurück"),
         Line::from(""),
         Line::from(Span::styled(
@@ -973,6 +1004,63 @@ fn render_date_menu(f: &mut Frame, app: &App, area: Rect) {
     );
 
     let popup_area = centered_rect(50, 60, area);
+    f.render_widget(Clear, popup_area);
+    f.render_widget(popup, popup_area);
+}
+
+/// Rendert den Bestätigungs-Dialog für das Leeren der Log-Datei
+fn render_confirm_truncate(f: &mut Frame, app: &App, area: Rect) {
+    let file_name = app
+        .file_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| app.file_path.display().to_string());
+    let size = format_file_size(app.file_size);
+
+    let lines = vec![
+        Line::from(Span::styled(
+            " Log-Datei wirklich leeren?",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            format!("  {} ({})", file_name, size),
+            Style::default().fg(Color::White),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  Diese Aktion schreibt die Datei auf 0 Byte und kann",
+            Style::default().fg(Color::Yellow),
+        )),
+        Line::from(Span::styled(
+            "  nicht rückgängig gemacht werden.",
+            Style::default().fg(Color::Yellow),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::raw("  ["),
+            Span::styled("y", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw("] / ["),
+            Span::styled("Enter", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw("]   Ja, leeren"),
+        ]),
+        Line::from(vec![
+            Span::raw("  ["),
+            Span::styled("n", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw("] / ["),
+            Span::styled("ESC", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw("]    Abbrechen"),
+        ]),
+    ];
+
+    let popup = Paragraph::new(lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" Bestätigen ")
+            .border_style(Style::default().fg(Color::Red)),
+    );
+
+    let popup_area = centered_rect(60, 40, area);
     f.render_widget(Clear, popup_area);
     f.render_widget(popup, popup_area);
 }
@@ -1091,6 +1179,10 @@ pub fn render(f: &mut Frame, app: &mut App) {
             render_list(f, app, main_area);
             render_date_menu(f, app, main_area);
         }
+        AppView::ConfirmTruncate => {
+            render_list(f, app, main_area);
+            render_confirm_truncate(f, app, main_area);
+        }
     }
 
     // Filter-Eingabe (überlagert Statusbar)
@@ -1183,6 +1275,24 @@ pub fn handle_input(app: &mut App) -> io::Result<()> {
             }
 
             // Datumsmenü
+            // Bestätigungs-Dialog: Log-Datei leeren
+            if app.view == AppView::ConfirmTruncate {
+                match key.code {
+                    KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Char('j') | KeyCode::Enter => {
+                        app.truncate_log_file();
+                        app.view = AppView::List;
+                    }
+                    KeyCode::Esc
+                    | KeyCode::Char('n')
+                    | KeyCode::Char('N')
+                    | KeyCode::Backspace => {
+                        app.view = AppView::List;
+                    }
+                    _ => {}
+                }
+                return Ok(());
+            }
+
             if app.view == AppView::DateMenu {
                 match key.code {
                     KeyCode::Esc | KeyCode::Char('d') => {
@@ -1347,6 +1457,10 @@ pub fn handle_input(app: &mut App) -> io::Result<()> {
                 }
                 KeyCode::Char('?') => {
                     app.view = AppView::Help;
+                }
+                KeyCode::Backspace => {
+                    // Bewusst nicht in der Statusleiste beworben — nur über Hilfe.
+                    app.view = AppView::ConfirmTruncate;
                 }
                 _ => {}
             }
@@ -1785,5 +1899,106 @@ mod tests {
         fs::remove_file(&path).unwrap();
         let changed = app.reload_if_changed().unwrap();
         assert!(!changed);
+    }
+
+    // -- truncate_log_file -------------------------------------------------
+
+    #[test]
+    fn truncate_clears_in_memory_state() {
+        let path = unique_temp_path("truncate_state");
+        write_log_lines(&path, 5);
+        let mut app = load_app_from(&path);
+        assert_eq!(app.entries.len(), 5);
+        assert_eq!(app.filtered_indices.len(), 5);
+        assert!(app.list_state.selected().is_some());
+        assert_eq!(app.seen_line_numbers.len(), 5);
+
+        app.truncate_log_file();
+
+        assert!(app.entries.is_empty());
+        assert!(app.filtered_indices.is_empty());
+        assert_eq!(app.list_state.selected(), None);
+        assert!(app.seen_line_numbers.is_empty());
+        assert!(app.new_line_numbers.is_empty());
+        assert_eq!(app.file_size, 0);
+        assert_eq!(app.lines_read, 0);
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn truncate_writes_zero_bytes_to_disk() {
+        let path = unique_temp_path("truncate_bytes");
+        write_log_lines(&path, 3);
+        let mut app = load_app_from(&path);
+        assert!(fs::metadata(&path).unwrap().len() > 0);
+
+        app.truncate_log_file();
+
+        assert_eq!(fs::metadata(&path).unwrap().len(), 0);
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn truncate_sets_status_message() {
+        let path = unique_temp_path("truncate_status");
+        write_log_lines(&path, 2);
+        let mut app = load_app_from(&path);
+        assert!(app.current_status_message().is_none());
+
+        app.truncate_log_file();
+
+        let msg = app
+            .current_status_message()
+            .expect("Statusmeldung sollte gesetzt sein");
+        assert!(
+            msg.to_lowercase().contains("geleert"),
+            "unerwartete Statusmeldung: {}",
+            msg
+        );
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn truncate_failure_on_missing_file_sets_error_status() {
+        let path = unique_temp_path("truncate_missing");
+        write_log_lines(&path, 1);
+        let mut app = load_app_from(&path);
+        fs::remove_file(&path).unwrap();
+
+        app.truncate_log_file();
+
+        // Der In-Memory-Stand bleibt unverändert (keine Datei → kein Truncate)
+        assert_eq!(app.entries.len(), 1);
+        let msg = app
+            .current_status_message()
+            .expect("Fehlermeldung sollte gesetzt sein");
+        assert!(
+            msg.to_lowercase().contains("fehlgeschlagen"),
+            "unerwartete Fehlermeldung: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn reload_after_truncate_sees_appended_entries_again() {
+        // Nach dem Leeren soll die Datei wieder normal befüllt und reload-bar sein.
+        let path = unique_temp_path("truncate_reload");
+        write_log_lines(&path, 4);
+        let mut app = load_app_from(&path);
+
+        app.truncate_log_file();
+        assert!(app.entries.is_empty());
+
+        // Schreibt 2 neue Einträge in die jetzt leere Datei
+        write_log_lines(&path, 2);
+        let changed = app.reload_if_changed().unwrap();
+        assert!(changed);
+        assert_eq!(app.entries.len(), 2);
+        assert!(app.filtered_indices.len() == 2);
+
+        let _ = fs::remove_file(&path);
     }
 }
