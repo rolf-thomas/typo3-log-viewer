@@ -16,6 +16,7 @@ use ratatui::{
 use std::collections::HashSet;
 use std::io;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 /// Aktuelle Ansicht
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,7 +86,12 @@ pub struct App {
     /// solange die markierte Zeile nicht am oberen Fensterrand angekommen ist.
     /// Wird durch manuelle Navigation deaktiviert und durch End reaktiviert.
     auto_tail: bool,
+    /// Kurzlebige Statusmeldung (z.B. "Kopiert"), die für ein paar Sekunden
+    /// in der Statusleiste eingeblendet wird.
+    status_message: Option<(String, Instant)>,
 }
+
+const STATUS_MESSAGE_TTL: Duration = Duration::from_secs(2);
 
 impl App {
     pub fn new(result: LoadResult) -> Self {
@@ -114,6 +120,7 @@ impl App {
             new_line_numbers: HashSet::new(),
             seen_line_numbers,
             auto_tail: true,
+            status_message: None,
         };
 
         // Wähle den letzten (neuesten) Eintrag
@@ -211,6 +218,37 @@ impl App {
             self.list_state.select(Some(self.filtered_indices.len() - 1));
             self.auto_tail = true;
         }
+    }
+
+    /// Kopiert den Inhalt der Detail-Ansicht des aktuell selektierten Eintrags
+    /// als Plain Text in die Zwischenablage und setzt eine Statusmeldung.
+    pub fn copy_detail_to_clipboard(&mut self) {
+        let Some(entry) = self.selected_entry() else {
+            self.set_status_message("Kein Eintrag ausgewählt");
+            return;
+        };
+        let lines = build_detail_lines(entry, self.show_exception);
+        let text = detail_lines_to_plain(&lines);
+
+        match crate::clipboard::copy_to_clipboard(&text) {
+            Ok(()) => self.set_status_message("Inhalt in die Zwischenablage kopiert"),
+            Err(e) => self.set_status_message(&format!("Kopieren fehlgeschlagen: {}", e)),
+        }
+    }
+
+    /// Liefert die aktuelle Statusmeldung, falls noch nicht abgelaufen.
+    pub fn current_status_message(&self) -> Option<&str> {
+        self.status_message.as_ref().and_then(|(msg, ts)| {
+            if ts.elapsed() < STATUS_MESSAGE_TTL {
+                Some(msg.as_str())
+            } else {
+                None
+            }
+        })
+    }
+
+    fn set_status_message(&mut self, msg: &str) {
+        self.status_message = Some((msg.to_string(), Instant::now()));
     }
 
     /// Setzt Level-Filter
@@ -704,24 +742,15 @@ fn render_json_value(
     }
 }
 
-/// Rendert die Detail-Ansicht
-fn render_detail(f: &mut Frame, app: &App, area: Rect) {
-    let entry = match app.selected_entry() {
-        Some(e) => e,
-        None => {
-            let block = Block::default()
-                .borders(Borders::ALL)
-                .title(" Kein Eintrag ausgewählt ");
-            f.render_widget(block, area);
-            return;
-        }
-    };
-
+/// Baut die Zeilen für die Detail-Ansicht (inkl. JSON-Aufbereitung).
+/// Wird sowohl vom Renderer als auch vom Clipboard-Befehl genutzt — letzterer
+/// strippt anschließend die Stilinformationen, damit der Inhalt 1:1 dem
+/// entspricht, was auf dem Bildschirm steht.
+fn build_detail_lines(entry: &LogEntry, show_exception: bool) -> Vec<Line<'static>> {
     let level_style = Style::default()
         .fg(level_color(entry.level))
         .add_modifier(Modifier::BOLD);
 
-    // Werte vorab extrahieren um Borrow-Probleme zu vermeiden
     let timestamp = entry.full_timestamp();
     let level_str = entry.level.as_str();
     let request_id = entry.request_id.clone().unwrap_or_else(|| "-".to_string());
@@ -754,9 +783,7 @@ fn render_detail(f: &mut Frame, app: &App, area: Rect) {
         Line::from(""),
     ];
 
-    // Prüfe ob JSON in der Nachricht enthalten ist
     if let Some((text_part, json_formatted)) = extract_json_from_message(&message) {
-        // Text vor dem JSON anzeigen
         if !text_part.is_empty() {
             for text_line in text_part.lines() {
                 lines.push(Line::from(text_line.to_string()));
@@ -764,7 +791,6 @@ fn render_detail(f: &mut Frame, app: &App, area: Rect) {
             lines.push(Line::from(""));
         }
 
-        // JSON formatiert anzeigen
         lines.push(Line::from(Span::styled(
             "JSON:",
             Style::default().add_modifier(Modifier::BOLD).fg(Color::Cyan),
@@ -772,7 +798,7 @@ fn render_detail(f: &mut Frame, app: &App, area: Rect) {
         lines.push(Line::from(""));
 
         if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&json_formatted) {
-            render_json_value(&json_val, 1, Color::Cyan, app.show_exception, &mut lines);
+            render_json_value(&json_val, 1, Color::Cyan, show_exception, &mut lines);
         } else {
             for json_line in json_formatted.lines() {
                 lines.push(Line::from(Span::styled(
@@ -782,13 +808,11 @@ fn render_detail(f: &mut Frame, app: &App, area: Rect) {
             }
         }
     } else {
-        // Normale Nachricht ohne JSON
         for msg_line in message.lines() {
             lines.push(Line::from(msg_line.to_string()));
         }
     }
 
-    // Extra-Daten (mehrzeilige Zusatzdaten aus dem Log)
     if let Some(formatted) = extra_data {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
@@ -797,9 +821,8 @@ fn render_detail(f: &mut Frame, app: &App, area: Rect) {
         )));
         lines.push(Line::from(""));
 
-        // Prüfe ob extra_data JSON ist
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&formatted) {
-            render_json_value(&json, 1, Color::Green, app.show_exception, &mut lines);
+            render_json_value(&json, 1, Color::Green, show_exception, &mut lines);
         } else {
             for data_line in formatted.lines() {
                 lines.push(Line::from(Span::styled(
@@ -810,13 +833,45 @@ fn render_detail(f: &mut Frame, app: &App, area: Rect) {
         }
     }
 
+    lines
+}
+
+/// Wandelt die Detail-Zeilen in Plain Text um (ohne Stilinformationen).
+/// Wird beim Kopieren in die Zwischenablage genutzt.
+fn detail_lines_to_plain(lines: &[Line<'static>]) -> String {
+    let mut out = String::new();
+    for (i, line) in lines.iter().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        for span in &line.spans {
+            out.push_str(&span.content);
+        }
+    }
+    out
+}
+
+/// Rendert die Detail-Ansicht
+fn render_detail(f: &mut Frame, app: &App, area: Rect) {
+    let entry = match app.selected_entry() {
+        Some(e) => e,
+        None => {
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title(" Kein Eintrag ausgewählt ");
+            f.render_widget(block, area);
+            return;
+        }
+    };
+
+    let lines = build_detail_lines(entry, app.show_exception);
     let text = Text::from(lines);
 
     let detail = Paragraph::new(text)
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(" Log Details [←→: Eintrag wechseln | ESC: Zurück] ")
+                .title(" Log Details [←→: Eintrag wechseln | c: Kopieren | ESC: Zurück] ")
                 .border_style(Style::default().fg(Color::Yellow)),
         )
         .wrap(Wrap { trim: false })
@@ -841,6 +896,11 @@ fn render_help(f: &mut Frame, area: Rect) {
         Line::from("  Home/g     Zum Anfang"),
         Line::from("  End/G      Zum Ende"),
         Line::from("  Enter      Details anzeigen"),
+        Line::from(""),
+        Line::from(Span::styled("Detail-Ansicht:", Style::default().add_modifier(Modifier::BOLD))),
+        Line::from("  ←→/h/l     Vorheriger / nächster Eintrag"),
+        Line::from("  e          Exception-Details ein-/ausklappen"),
+        Line::from("  c          Inhalt in Zwischenablage kopieren"),
         Line::from(""),
         Line::from(Span::styled("Filter:", Style::default().add_modifier(Modifier::BOLD))),
         Line::from("  f          Request-Fokus (alle Einträge dieser Request-ID)"),
@@ -951,13 +1011,15 @@ fn render_filter_input(f: &mut Frame, app: &App, area: Rect) {
 fn render_statusbar(f: &mut Frame, app: &App, area: Rect) {
     let version = env!("CARGO_PKG_VERSION");
 
-    let left = if app.filter_mode != FilterMode::None {
+    let left = if let Some(msg) = app.current_status_message() {
+        format!(" {}", msg)
+    } else if app.filter_mode != FilterMode::None {
         "Enter: Bestätigen | ESC: Abbrechen".to_string()
     } else if app.view == AppView::Detail {
         let pos = app.list_state.selected().map(|s| s + 1).unwrap_or(0);
         let total = app.filtered_indices.len();
         format!(
-            " {}/{} | ↑↓:Scrollen | ←→:Eintrag wechseln | e:Exception ein/aus | ESC/Enter:Zurück | q:Quit",
+            " {}/{} | ↑↓:Scrollen | ←→:Eintrag | e:Exception | c:Kopieren | ESC:Zurück | q:Quit",
             pos, total
         )
     } else {
@@ -1179,6 +1241,9 @@ pub fn handle_input(app: &mut App) -> io::Result<()> {
                     }
                     KeyCode::Char('e') => {
                         app.show_exception = !app.show_exception;
+                    }
+                    KeyCode::Char('c') => {
+                        app.copy_detail_to_clipboard();
                     }
                     KeyCode::Left | KeyCode::Char('h') => {
                         app.move_up();

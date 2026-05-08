@@ -1,3 +1,4 @@
+mod clipboard;
 mod loader;
 mod model;
 mod parser;
