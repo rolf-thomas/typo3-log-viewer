@@ -9,7 +9,9 @@ Interaktiver Terminal-Viewer für TYPO3-Logdateien. Schnelles Navigieren, Filter
 - **Listenansicht** mit Zeitstempel, farbcodierten Log-Levels und gekürzter Nachricht
 - **Detailansicht** mit vollständiger Nachricht, Request-ID, Component und Pretty-Print JSON
 - **Interaktive Dateiauswahl** bei Verzeichnis-Argument — zurück zur Auswahl per ESC
-- **Live-Reload** — erkennt Änderungen in der Logdatei automatisch
+- **Live-Reload** — erkennt Änderungen in der Logdatei automatisch (inkrementelles Tail-Reload, geringer Speicherverbrauch auch bei großen Dateien)
+- **Logdatei leeren** — direkt aus der Anwendung mit Backspace (mit Bestätigung)
+- **Copy-to-Clipboard** — kompletten Eintrag aus der Detailansicht in die Zwischenablage kopieren
 - **Datumsfilter** — heute, letzter Monat, letzte 6/12 Monate oder eigener Bereich (TT.MM.JJJJ)
 - **Request-Fokus** — alle Log-Einträge einer Request-ID auf einen Blick
 - **Selbe Nachrichten** — filtert auf Einträge mit identischer Meldung (vor dem JSON-Block)
@@ -97,6 +99,7 @@ Ohne Argument wird `./var/log/` verwendet, falls das Verzeichnis existiert.
 | `1`–`4` | Level-Filter (1=Error, 2=Warning, 3=Info, 4=Debug) |
 | `0` | Alle Filter zurücksetzen |
 | `ESC` | Filter zurücksetzen / zurück zur Dateiauswahl |
+| `Backspace` | Logdatei leeren (mit Bestätigung) |
 | `?` | Hilfe |
 | `q` | Beenden |
 
@@ -110,6 +113,7 @@ Ohne Argument wird `./var/log/` verwendet, falls das Verzeichnis existiert.
 | `Home` / `g` | Zum ersten Eintrag |
 | `End` / `G` | Zum letzten Eintrag |
 | `e` | Exception-Block ein-/ausblenden |
+| `c` | Eintrag in die Zwischenablage kopieren (pbcopy / wl-copy / xclip / xsel / clip.exe) |
 | `ESC`, `Enter`, `q` | Zurück zur Liste |
 
 ### Datumsfilter-Menü (`d`)
