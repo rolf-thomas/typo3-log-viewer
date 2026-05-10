@@ -24,26 +24,43 @@ use std::process;
 use ui::{run_app, App, AppExit};
 
 fn print_version() {
-    println!("typo3-log-viewer {}", env!("CARGO_PKG_VERSION"));
+    println!("{}", env!("CARGO_PKG_VERSION"));
 }
 
 fn print_usage() {
-    eprintln!("TYPO3 Log Viewer - Interaktive Darstellung von TYPO3-Logdateien");
+    eprintln!("TYPO3 Log Viewer v{} - Interaktive Darstellung von TYPO3-Logdateien", env!("CARGO_PKG_VERSION"));
     eprintln!();
     eprintln!("Verwendung:");
     eprintln!("  typo3-log-viewer <datei.log>     Öffnet eine spezifische Log-Datei");
     eprintln!("  typo3-log-viewer <verzeichnis>   Listet alle .log-Dateien im Verzeichnis");
     eprintln!("  typo3-log-viewer                 Nutzt ./var/log/ falls vorhanden");
     eprintln!();
-    eprintln!("Tastenkürzel:");
-    eprintln!("  ↑/↓, j/k      Navigation");
-    eprintln!("  PgUp/PgDown   Schnelles Scrollen");
-    eprintln!("  Enter         Details anzeigen");
-    eprintln!("  /             Textsuche");
-    eprintln!("  1-4           Level-Filter (1=Error, 2=Warning, 3=Info, 4=Debug)");
-    eprintln!("  0             Filter zurücksetzen");
-    eprintln!("  ?             Hilfe");
-    eprintln!("  q, ESC        Beenden");
+    eprintln!("Navigation:");
+    eprintln!("  ↑/↓, j/k        Nach oben / unten");
+    eprintln!("  PgUp/PgDown     Seite hoch / runter  (macOS: Fn+↑/↓)");
+    eprintln!("  Home/g, End/G   Zum Anfang / Ende    (macOS: Fn+←/→)");
+    eprintln!("  Enter           Details anzeigen");
+    eprintln!();
+    eprintln!("Detail-Ansicht:");
+    eprintln!("  ←/→, h/l        Vorheriger / nächster Eintrag");
+    eprintln!("  ↑/↓, j/k        Scrollen");
+    eprintln!("  e               Exception-Details ein-/ausklappen");
+    eprintln!("  c               Inhalt in Zwischenablage kopieren");
+    eprintln!("  ESC/Enter       Zurück zur Liste");
+    eprintln!();
+    eprintln!("Filter:");
+    eprintln!("  /               Textsuche (Nachricht + Component)");
+    eprintln!("  1–4             Level-Filter (1=Error, 2=Warning, 3=Info, 4=Debug)");
+    eprintln!("  f               Request-Fokus (alle Einträge dieser Request-ID)");
+    eprintln!("  s               Selbe Lognachricht anzeigen");
+    eprintln!("  d               Datumsfilter-Menü (Heute, Monat, Bereich)");
+    eprintln!("  0 / ESC         Filter zurücksetzen");
+    eprintln!();
+    eprintln!("Allgemein:");
+    eprintln!("  t               Zeitkorrektur: dann + / − (je 1h) oder 0 (Reset)");
+    eprintln!("  Backspace       Log-Datei leeren (mit Bestätigung)");
+    eprintln!("  ?               Hilfe (im TUI)");
+    eprintln!("  q / ESC         Beenden");
 }
 
 /// Datei-Info für die Auswahl
@@ -231,7 +248,6 @@ fn main() {
     } else {
         let default = Path::new("./var/log");
         if default.is_dir() {
-            eprintln!("Kein Pfad angegeben — verwende ./var/log/");
             "./var/log".to_string()
         } else {
             print_usage();
@@ -287,7 +303,6 @@ fn main() {
         };
 
         // Datei laden
-        eprintln!("Lade {}...", file_to_open.display());
         let result = match load_log_file(&file_to_open) {
             Ok(r) => r,
             Err(e) => {
@@ -295,13 +310,6 @@ fn main() {
                 process::exit(1);
             }
         };
-
-        if result.entries.is_empty() {
-            eprintln!("Keine Log-Einträge in der Datei gefunden.");
-            process::exit(1);
-        }
-
-        eprintln!("{} Einträge geladen.", result.entries.len());
 
         match run_tui(result, has_file_selector) {
             Ok(AppExit::Back) => continue,
