@@ -91,6 +91,11 @@ pub struct App {
     /// Kurzlebige Statusmeldung (z.B. "Kopiert"), die für ein paar Sekunden
     /// in der Statusleiste eingeblendet wird.
     status_message: Option<(String, Instant)>,
+    /// Manuelle Zeitkorrektur in Stunden (0 = keine Korrektur).
+    /// Ermöglicht es, Timestamps anzupassen wenn Serverzeit von lokaler Zeit abweicht.
+    pub timestamp_offset_hours: i32,
+    /// Wartet auf +/−/0 nach Drücken von 't'
+    time_adjust_mode: bool,
 }
 
 const STATUS_MESSAGE_TTL: Duration = Duration::from_secs(2);
@@ -123,6 +128,8 @@ impl App {
             seen_line_numbers,
             auto_tail: true,
             status_message: None,
+            timestamp_offset_hours: 0,
+            time_adjust_mode: false,
         };
 
         // Wähle den letzten (neuesten) Eintrag
@@ -229,7 +236,7 @@ impl App {
             self.set_status_message("Kein Eintrag ausgewählt");
             return;
         };
-        let lines = build_detail_lines(entry, self.show_exception);
+        let lines = build_detail_lines(entry, self.show_exception, self.timestamp_offset_hours);
         let text = detail_lines_to_plain(&lines);
 
         match crate::clipboard::copy_to_clipboard(&text) {
@@ -349,6 +356,35 @@ impl App {
             // Selektion auf ersten Eintrag des Requests setzen
             self.list_state.select(Some(0));
             self.auto_tail = false;
+        }
+    }
+
+    /// Zeitkorrektur um eine Stunde erhöhen
+    pub fn timestamp_offset_inc(&mut self) {
+        self.timestamp_offset_hours += 1;
+        self.set_status_message(&self.timestamp_offset_label());
+    }
+
+    /// Zeitkorrektur um eine Stunde verringern
+    pub fn timestamp_offset_dec(&mut self) {
+        self.timestamp_offset_hours -= 1;
+        self.set_status_message(&self.timestamp_offset_label());
+    }
+
+    /// Zeitkorrektur zurücksetzen
+    pub fn timestamp_offset_reset(&mut self) {
+        self.timestamp_offset_hours = 0;
+        self.set_status_message("Zeitkorrektur zurückgesetzt");
+    }
+
+    pub fn timestamp_offset_label(&self) -> String {
+        if self.timestamp_offset_hours == 0 {
+            "Zeitkorrektur: 0h (keine)".to_string()
+        } else {
+            format!(
+                "Zeitkorrektur: {:+}h",
+                self.timestamp_offset_hours
+            )
         }
     }
 
@@ -481,6 +517,28 @@ fn level_color(level: LogLevel) -> Color {
     }
 }
 
+/// Gibt den angepassten Timestamp-String und die passende Farbe zurück.
+/// Bei aktivem Offset wird Yellow statt Cyan verwendet.
+fn adjusted_short_timestamp(entry: &LogEntry, offset_hours: i32) -> (String, Color) {
+    if offset_hours == 0 {
+        return (entry.short_timestamp(), Color::Cyan);
+    }
+    use chrono::Duration;
+    let adjusted = entry.timestamp + Duration::hours(offset_hours as i64);
+    let ts = adjusted.format("%d.%m.%y %H:%M").to_string();
+    (ts, Color::Yellow)
+}
+
+fn adjusted_full_timestamp(entry: &LogEntry, offset_hours: i32) -> (String, Color) {
+    if offset_hours == 0 {
+        return (entry.full_timestamp(), Color::Reset);
+    }
+    use chrono::Duration;
+    let adjusted = entry.timestamp + Duration::hours(offset_hours as i64);
+    let ts = adjusted.format("%a, %d %b %Y %H:%M:%S %z").to_string();
+    (ts, Color::Yellow)
+}
+
 /// Schneidet `s` auf höchstens `max_bytes` Bytes ab, ohne ein UTF-8-Zeichen zu zerteilen.
 fn truncate_at_char_boundary(s: &str, max_bytes: usize) -> &str {
     if s.len() <= max_bytes {
@@ -524,7 +582,7 @@ fn render_list(f: &mut Frame, app: &mut App, area: Rect) {
 
             // Berechne verfügbare Breite für Nachricht
             // 2 Trennzeichen " │ " = je 3 Zeichen
-            let timestamp = entry.short_timestamp();
+            let (timestamp, ts_color) = adjusted_short_timestamp(entry, app.timestamp_offset_hours);
             let level_str = format!("[{}]", entry.level);
             let level_padded = format!("{:<width$}", level_str, width = level_col_width);
             let prefix_len = timestamp.len() + level_col_width + 6; // +6 für zwei " │ "
@@ -543,7 +601,7 @@ fn render_list(f: &mut Frame, app: &mut App, area: Rect) {
 
             let sep = Style::default().fg(Color::DarkGray);
             let mut spans = vec![
-                Span::styled(timestamp, Style::default().fg(Color::Cyan)),
+                Span::styled(timestamp, Style::default().fg(ts_color)),
                 Span::styled(" │ ", sep),
                 Span::styled(level_padded, level_style.add_modifier(Modifier::BOLD)),
                 Span::styled(" │ ", sep),
@@ -776,12 +834,12 @@ fn render_json_value(
 /// Wird sowohl vom Renderer als auch vom Clipboard-Befehl genutzt — letzterer
 /// strippt anschließend die Stilinformationen, damit der Inhalt 1:1 dem
 /// entspricht, was auf dem Bildschirm steht.
-fn build_detail_lines(entry: &LogEntry, show_exception: bool) -> Vec<Line<'static>> {
+fn build_detail_lines(entry: &LogEntry, show_exception: bool, timestamp_offset_hours: i32) -> Vec<Line<'static>> {
     let level_style = Style::default()
         .fg(level_color(entry.level))
         .add_modifier(Modifier::BOLD);
 
-    let timestamp = entry.full_timestamp();
+    let (timestamp, ts_color) = adjusted_full_timestamp(entry, timestamp_offset_hours);
     let level_str = entry.level.as_str();
     let request_id = entry.request_id.clone().unwrap_or_else(|| "-".to_string());
     let component = entry.component.clone();
@@ -789,11 +847,30 @@ fn build_detail_lines(entry: &LogEntry, show_exception: bool) -> Vec<Line<'stati
     let message = entry.message.clone();
     let extra_data = entry.formatted_extra_data();
 
-    let mut lines = vec![
+    let ts_style = if ts_color == Color::Reset {
+        Style::default()
+    } else {
+        Style::default().fg(ts_color)
+    };
+
+    let ts_line = if timestamp_offset_hours != 0 {
         Line::from(vec![
             Span::styled("Zeitpunkt:  ", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(timestamp),
-        ]),
+            Span::styled(timestamp, ts_style),
+            Span::styled(
+                format!(" (angepasst, {:+}h)", timestamp_offset_hours),
+                Style::default().fg(Color::Yellow),
+            ),
+        ])
+    } else {
+        Line::from(vec![
+            Span::styled("Zeitpunkt:  ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(timestamp, ts_style),
+        ])
+    };
+
+    let mut lines = vec![
+        ts_line,
         Line::from(vec![
             Span::styled("Level:      ", Style::default().add_modifier(Modifier::BOLD)),
             Span::styled(level_str, level_style),
@@ -894,7 +971,7 @@ fn render_detail(f: &mut Frame, app: &App, area: Rect) {
         }
     };
 
-    let lines = build_detail_lines(entry, app.show_exception);
+    let lines = build_detail_lines(entry, app.show_exception, app.timestamp_offset_hours);
     let text = Text::from(lines);
 
     let detail = Paragraph::new(text)
@@ -941,6 +1018,7 @@ fn render_help(f: &mut Frame, area: Rect) {
         Line::from("  0/ESC      Filter zurücksetzen"),
         Line::from(""),
         Line::from(Span::styled("Allgemein:", Style::default().add_modifier(Modifier::BOLD))),
+        Line::from("  t          Zeitkorrektur: dann +/− (Stunde) oder 0 (Reset)"),
         Line::from("  ?          Diese Hilfe"),
         Line::from("  Backspace  Log-Datei leeren (mit Bestätigung)"),
         Line::from("  q/ESC      Beenden / Zurück"),
@@ -1099,7 +1177,15 @@ fn render_filter_input(f: &mut Frame, app: &App, area: Rect) {
 fn render_statusbar(f: &mut Frame, app: &App, area: Rect) {
     let version = env!("CARGO_PKG_VERSION");
 
-    let left = if let Some(msg) = app.current_status_message() {
+    let time_indicator = if app.timestamp_offset_hours != 0 {
+        format!(" [Zeitkorrektur: {:+}h]", app.timestamp_offset_hours)
+    } else {
+        String::new()
+    };
+
+    let left = if app.time_adjust_mode {
+        " Zeitkorrektur: +/− Stunde anpassen | 0 zurücksetzen | ESC abbrechen".to_string()
+    } else if let Some(msg) = app.current_status_message() {
         format!(" {}", msg)
     } else if app.filter_mode != FilterMode::None {
         "Enter: Bestätigen | ESC: Abbrechen".to_string()
@@ -1107,15 +1193,15 @@ fn render_statusbar(f: &mut Frame, app: &App, area: Rect) {
         let pos = app.list_state.selected().map(|s| s + 1).unwrap_or(0);
         let total = app.filtered_indices.len();
         format!(
-            " {}/{} | ↑↓:Scrollen | ←→:Eintrag | e:Exception | c:Kopieren | ESC:Zurück | q:Quit",
-            pos, total
+            " {}/{}{} | ↑↓:Scrollen | ←→:Eintrag | e:Exception | c:Kopieren | t:Zeit | ESC:Zurück | q:Quit",
+            pos, total, time_indicator
         )
     } else {
         let pos = app.list_state.selected().map(|s| s + 1).unwrap_or(0);
         let total = app.filtered_indices.len();
         format!(
-            " {}/{} | ↑↓:Nav | Enter:Details | f:Fokus | s:Selbe | d:Datum | /:Suche | 1-4:Level | 0:Reset | ?:Hilfe | q:Quit",
-            pos, total
+            " {}/{}{} | ↑↓:Nav | Enter:Details | f:Fokus | s:Selbe | d:Datum | /:Suche | 1-4:Level | t:Zeit | 0:Reset | ?:Hilfe | q:Quit",
+            pos, total, time_indicator
         )
     };
 
@@ -1198,6 +1284,26 @@ pub fn handle_input(app: &mut App) -> io::Result<()> {
     if event::poll(std::time::Duration::from_millis(100))? {
         if let Event::Key(key) = event::read()? {
             if key.kind != KeyEventKind::Press {
+                return Ok(());
+            }
+
+            // Zeitkorrektur-Modus
+            if app.time_adjust_mode {
+                match key.code {
+                    KeyCode::Char('+') | KeyCode::Char('=') => {
+                        app.timestamp_offset_inc();
+                    }
+                    KeyCode::Char('-') => {
+                        app.timestamp_offset_dec();
+                    }
+                    KeyCode::Char('0') => {
+                        app.timestamp_offset_reset();
+                        app.time_adjust_mode = false;
+                    }
+                    KeyCode::Esc | KeyCode::Char('t') => {}
+                    _ => {}
+                }
+                app.time_adjust_mode = false;
                 return Ok(());
             }
 
@@ -1355,6 +1461,9 @@ pub fn handle_input(app: &mut App) -> io::Result<()> {
                     KeyCode::Char('c') => {
                         app.copy_detail_to_clipboard();
                     }
+                    KeyCode::Char('t') => {
+                        app.time_adjust_mode = true;
+                    }
                     KeyCode::Left | KeyCode::Char('h') => {
                         app.move_up();
                         app.detail_scroll = 0;
@@ -1454,6 +1563,9 @@ pub fn handle_input(app: &mut App) -> io::Result<()> {
                 }
                 KeyCode::Char('d') => {
                     app.view = AppView::DateMenu;
+                }
+                KeyCode::Char('t') => {
+                    app.time_adjust_mode = true;
                 }
                 KeyCode::Char('?') => {
                     app.view = AppView::Help;
@@ -2000,5 +2112,128 @@ mod tests {
         assert!(app.filtered_indices.len() == 2);
 
         let _ = fs::remove_file(&path);
+    }
+
+    // -- Zeitkorrektur -----------------------------------------------------
+
+    #[test]
+    fn timestamp_offset_default_is_zero() {
+        let app = make_app(1);
+        assert_eq!(app.timestamp_offset_hours, 0);
+    }
+
+    #[test]
+    fn timestamp_offset_inc_increases_by_one() {
+        let mut app = make_app(1);
+        app.timestamp_offset_inc();
+        assert_eq!(app.timestamp_offset_hours, 1);
+        app.timestamp_offset_inc();
+        assert_eq!(app.timestamp_offset_hours, 2);
+    }
+
+    #[test]
+    fn timestamp_offset_dec_decreases_by_one() {
+        let mut app = make_app(1);
+        app.timestamp_offset_dec();
+        assert_eq!(app.timestamp_offset_hours, -1);
+        app.timestamp_offset_dec();
+        assert_eq!(app.timestamp_offset_hours, -2);
+    }
+
+    #[test]
+    fn timestamp_offset_reset_returns_to_zero() {
+        let mut app = make_app(1);
+        app.timestamp_offset_hours = 5;
+        app.timestamp_offset_reset();
+        assert_eq!(app.timestamp_offset_hours, 0);
+    }
+
+    #[test]
+    fn timestamp_offset_label_zero() {
+        let app = make_app(1);
+        assert!(app.timestamp_offset_label().contains('0'));
+    }
+
+    #[test]
+    fn timestamp_offset_label_positive() {
+        let mut app = make_app(1);
+        app.timestamp_offset_hours = 3;
+        assert_eq!(app.timestamp_offset_label(), "Zeitkorrektur: +3h");
+    }
+
+    #[test]
+    fn timestamp_offset_label_negative() {
+        let mut app = make_app(1);
+        app.timestamp_offset_hours = -2;
+        assert_eq!(app.timestamp_offset_label(), "Zeitkorrektur: -2h");
+    }
+
+    #[test]
+    fn adjusted_short_timestamp_no_offset_returns_cyan() {
+        let entry = make_entry(1);
+        let (ts, color) = adjusted_short_timestamp(&entry, 0);
+        assert_eq!(ts, entry.short_timestamp());
+        assert_eq!(color, Color::Cyan);
+    }
+
+    #[test]
+    fn adjusted_short_timestamp_positive_offset_shifts_time() {
+        let entry = make_entry(1); // 2026-04-02T12:00:00+02:00
+        let (ts, color) = adjusted_short_timestamp(&entry, 2);
+        assert_eq!(ts, "02.04.26 14:00");
+        assert_eq!(color, Color::Yellow);
+    }
+
+    #[test]
+    fn adjusted_short_timestamp_negative_offset_shifts_time() {
+        let entry = make_entry(1); // 2026-04-02T12:00:00+02:00
+        let (ts, color) = adjusted_short_timestamp(&entry, -3);
+        assert_eq!(ts, "02.04.26 09:00");
+        assert_eq!(color, Color::Yellow);
+    }
+
+    #[test]
+    fn adjusted_short_timestamp_offset_crosses_midnight() {
+        let entry = make_entry(1); // 2026-04-02T12:00:00+02:00
+        let (ts, _) = adjusted_short_timestamp(&entry, 13);
+        assert_eq!(ts, "03.04.26 01:00");
+    }
+
+    #[test]
+    fn adjusted_full_timestamp_no_offset_returns_reset_color() {
+        let entry = make_entry(1);
+        let (ts, color) = adjusted_full_timestamp(&entry, 0);
+        assert_eq!(ts, entry.full_timestamp());
+        assert_eq!(color, Color::Reset);
+    }
+
+    #[test]
+    fn adjusted_full_timestamp_with_offset_returns_yellow() {
+        let entry = make_entry(1);
+        let (_, color) = adjusted_full_timestamp(&entry, 1);
+        assert_eq!(color, Color::Yellow);
+    }
+
+    #[test]
+    fn adjusted_full_timestamp_positive_offset_shifts_time() {
+        let entry = make_entry(1); // 12:00
+        let (ts, _) = adjusted_full_timestamp(&entry, 2);
+        assert!(ts.contains("14:00:00"), "expected 14:00 in '{}'", ts);
+    }
+
+    #[test]
+    fn timestamp_offset_inc_sets_status_message() {
+        let mut app = make_app(1);
+        app.timestamp_offset_inc();
+        assert!(app.current_status_message().is_some());
+        assert!(app.current_status_message().unwrap().contains("+1"));
+    }
+
+    #[test]
+    fn timestamp_offset_reset_sets_status_message() {
+        let mut app = make_app(1);
+        app.timestamp_offset_hours = 3;
+        app.timestamp_offset_reset();
+        assert!(app.current_status_message().is_some());
     }
 }
