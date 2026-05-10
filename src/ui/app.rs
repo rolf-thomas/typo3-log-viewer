@@ -529,14 +529,17 @@ fn adjusted_short_timestamp(entry: &LogEntry, offset_hours: i32) -> (String, Col
     (ts, Color::Yellow)
 }
 
+fn format_full_timestamp_localized(dt: &chrono::DateTime<chrono::FixedOffset>) -> String {
+    dt.format("%d.%m.%Y, %H:%M:%S").to_string()
+}
+
 fn adjusted_full_timestamp(entry: &LogEntry, offset_hours: i32) -> (String, Color) {
     if offset_hours == 0 {
-        return (entry.full_timestamp(), Color::Reset);
+        return (format_full_timestamp_localized(&entry.timestamp), Color::Reset);
     }
     use chrono::Duration;
     let adjusted = entry.timestamp + Duration::hours(offset_hours as i64);
-    let ts = adjusted.format("%a, %d %b %Y %H:%M:%S %z").to_string();
-    (ts, Color::Yellow)
+    (format_full_timestamp_localized(&adjusted), Color::Yellow)
 }
 
 /// Schneidet `s` auf höchstens `max_bytes` Bytes ab, ohne ein UTF-8-Zeichen zu zerteilen.
@@ -2206,7 +2209,7 @@ mod tests {
     fn adjusted_full_timestamp_no_offset_returns_reset_color() {
         let entry = make_entry(1);
         let (ts, color) = adjusted_full_timestamp(&entry, 0);
-        assert_eq!(ts, entry.full_timestamp());
+        assert_eq!(ts, "02.04.2026, 12:00:00");
         assert_eq!(color, Color::Reset);
     }
 
@@ -2221,7 +2224,7 @@ mod tests {
     fn adjusted_full_timestamp_positive_offset_shifts_time() {
         let entry = make_entry(1); // 12:00
         let (ts, _) = adjusted_full_timestamp(&entry, 2);
-        assert!(ts.contains("14:00:00"), "expected 14:00 in '{}'", ts);
+        assert_eq!(ts, "02.04.2026, 14:00:00");
     }
 
     #[test]

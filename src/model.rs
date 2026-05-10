@@ -88,11 +88,6 @@ impl LogEntry {
         self.timestamp.format("%d.%m.%y %H:%M:%S").to_string()
     }
 
-    /// Formatiert den Zeitstempel vollständig für die Detail-Ansicht
-    pub fn full_timestamp(&self) -> String {
-        self.timestamp.format("%a, %d %b %Y %H:%M:%S %z").to_string()
-    }
-
     /// Formatiert extra_data als hübsches JSON falls möglich
     pub fn formatted_extra_data(&self) -> Option<String> {
         self.extra_data.as_ref().map(|data| {
@@ -309,12 +304,6 @@ mod tests {
     fn short_timestamp_format() {
         let entry = make_entry(LogLevel::Info, "msg", "Comp", None, TS);
         assert_eq!(entry.short_timestamp(), "02.04.26 12:00:00");
-    }
-
-    #[test]
-    fn full_timestamp_format() {
-        let entry = make_entry(LogLevel::Info, "msg", "Comp", None, TS);
-        assert_eq!(entry.full_timestamp(), "Thu, 02 Apr 2026 12:00:00 +0200");
     }
 
     #[test]
