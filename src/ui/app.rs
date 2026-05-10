@@ -1439,9 +1439,12 @@ pub fn handle_input(app: &mut App) -> io::Result<()> {
             // Detail-Ansicht
             if app.view == AppView::Detail {
                 match key.code {
-                    KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter => {
+                    KeyCode::Esc | KeyCode::Enter => {
                         app.view = AppView::List;
                         app.detail_scroll = 0;
+                    }
+                    KeyCode::Char('q') => {
+                        app.should_quit = true;
                     }
                     KeyCode::Up | KeyCode::Char('k') => {
                         app.detail_scroll = app.detail_scroll.saturating_sub(1);
