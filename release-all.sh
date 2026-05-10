@@ -91,7 +91,9 @@ banner "Formel patchen"
 
 git add Formula/typo3-log-viewer.rb
 git commit -m "Updates version to $VERSION in brew formula"
+git tag "$TAG"
 git push
+git push origin "$TAG"
 
 # --- GitHub Release ---
 
@@ -100,6 +102,7 @@ gh release create "$TAG" \
   --repo "$REPO" \
   --title "$TAG" \
   --generate-notes \
+  --tag "$TAG" \
   dist/*.tar.gz
 
 RELEASE_URL=$(gh release view "$TAG" --repo "$REPO" --json url -q .url)
