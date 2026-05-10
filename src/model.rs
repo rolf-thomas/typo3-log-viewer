@@ -85,7 +85,7 @@ pub struct LogEntry {
 impl LogEntry {
     /// Formatiert den Zeitstempel kurz für die Listen-Ansicht
     pub fn short_timestamp(&self) -> String {
-        self.timestamp.format("%d.%m.%y %H:%M").to_string()
+        self.timestamp.format("%d.%m.%y %H:%M:%S").to_string()
     }
 
     /// Formatiert den Zeitstempel vollständig für die Detail-Ansicht
@@ -308,7 +308,7 @@ mod tests {
     #[test]
     fn short_timestamp_format() {
         let entry = make_entry(LogLevel::Info, "msg", "Comp", None, TS);
-        assert_eq!(entry.short_timestamp(), "02.04.26 12:00");
+        assert_eq!(entry.short_timestamp(), "02.04.26 12:00:00");
     }
 
     #[test]

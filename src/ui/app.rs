@@ -525,7 +525,7 @@ fn adjusted_short_timestamp(entry: &LogEntry, offset_hours: i32) -> (String, Col
     }
     use chrono::Duration;
     let adjusted = entry.timestamp + Duration::hours(offset_hours as i64);
-    let ts = adjusted.format("%d.%m.%y %H:%M").to_string();
+    let ts = adjusted.format("%d.%m.%y %H:%M:%S").to_string();
     (ts, Color::Yellow)
 }
 
@@ -2180,7 +2180,7 @@ mod tests {
     fn adjusted_short_timestamp_positive_offset_shifts_time() {
         let entry = make_entry(1); // 2026-04-02T12:00:00+02:00
         let (ts, color) = adjusted_short_timestamp(&entry, 2);
-        assert_eq!(ts, "02.04.26 14:00");
+        assert_eq!(ts, "02.04.26 14:00:00");
         assert_eq!(color, Color::Yellow);
     }
 
@@ -2188,7 +2188,7 @@ mod tests {
     fn adjusted_short_timestamp_negative_offset_shifts_time() {
         let entry = make_entry(1); // 2026-04-02T12:00:00+02:00
         let (ts, color) = adjusted_short_timestamp(&entry, -3);
-        assert_eq!(ts, "02.04.26 09:00");
+        assert_eq!(ts, "02.04.26 09:00:00");
         assert_eq!(color, Color::Yellow);
     }
 
@@ -2196,7 +2196,7 @@ mod tests {
     fn adjusted_short_timestamp_offset_crosses_midnight() {
         let entry = make_entry(1); // 2026-04-02T12:00:00+02:00
         let (ts, _) = adjusted_short_timestamp(&entry, 13);
-        assert_eq!(ts, "03.04.26 01:00");
+        assert_eq!(ts, "03.04.26 01:00:00");
     }
 
     #[test]
