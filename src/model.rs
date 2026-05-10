@@ -246,3 +246,317 @@ pub fn parse_date_input(s: &str) -> Option<NaiveDate> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::DateTime;
+
+    fn make_entry(level: LogLevel, message: &str, component: &str, request_id: Option<&str>, timestamp: &str) -> LogEntry {
+        LogEntry {
+            timestamp: DateTime::parse_from_str(timestamp, "%a, %d %b %Y %H:%M:%S %z").unwrap(),
+            level,
+            request_id: request_id.map(|s| s.to_string()),
+            component: component.to_string(),
+            message: message.to_string(),
+            extra_data: None,
+            line_number: 1,
+        }
+    }
+
+    const TS: &str = "Thu, 02 Apr 2026 12:00:00 +0200";
+
+    // --- LogLevel ---
+
+    #[test]
+    fn log_level_from_str_all_variants() {
+        assert_eq!(LogLevel::from_str("EMERGENCY"), Some(LogLevel::Emergency));
+        assert_eq!(LogLevel::from_str("ALERT"),     Some(LogLevel::Alert));
+        assert_eq!(LogLevel::from_str("CRITICAL"),  Some(LogLevel::Critical));
+        assert_eq!(LogLevel::from_str("ERROR"),     Some(LogLevel::Error));
+        assert_eq!(LogLevel::from_str("WARNING"),   Some(LogLevel::Warning));
+        assert_eq!(LogLevel::from_str("NOTICE"),    Some(LogLevel::Notice));
+        assert_eq!(LogLevel::from_str("INFO"),      Some(LogLevel::Info));
+        assert_eq!(LogLevel::from_str("DEBUG"),     Some(LogLevel::Debug));
+    }
+
+    #[test]
+    fn log_level_from_str_case_insensitive() {
+        assert_eq!(LogLevel::from_str("error"), Some(LogLevel::Error));
+        assert_eq!(LogLevel::from_str("Warning"), Some(LogLevel::Warning));
+    }
+
+    #[test]
+    fn log_level_from_str_unknown_returns_none() {
+        assert_eq!(LogLevel::from_str("VERBOSE"), None);
+        assert_eq!(LogLevel::from_str(""), None);
+    }
+
+    #[test]
+    fn log_level_severity_order() {
+        assert!(LogLevel::Emergency.severity() < LogLevel::Alert.severity());
+        assert!(LogLevel::Alert.severity()     < LogLevel::Critical.severity());
+        assert!(LogLevel::Critical.severity()  < LogLevel::Error.severity());
+        assert!(LogLevel::Error.severity()     < LogLevel::Warning.severity());
+        assert!(LogLevel::Warning.severity()   < LogLevel::Notice.severity());
+        assert!(LogLevel::Notice.severity()    < LogLevel::Info.severity());
+        assert!(LogLevel::Info.severity()      < LogLevel::Debug.severity());
+    }
+
+    // --- LogEntry helpers ---
+
+    #[test]
+    fn short_timestamp_format() {
+        let entry = make_entry(LogLevel::Info, "msg", "Comp", None, TS);
+        assert_eq!(entry.short_timestamp(), "02.04.26 12:00");
+    }
+
+    #[test]
+    fn full_timestamp_format() {
+        let entry = make_entry(LogLevel::Info, "msg", "Comp", None, TS);
+        assert_eq!(entry.full_timestamp(), "Thu, 02 Apr 2026 12:00:00 +0200");
+    }
+
+    #[test]
+    fn formatted_extra_data_pretty_prints_json() {
+        let mut entry = make_entry(LogLevel::Info, "msg", "Comp", None, TS);
+        entry.extra_data = Some(r#"{"key":"value"}"#.to_string());
+        let formatted = entry.formatted_extra_data().unwrap();
+        assert!(formatted.contains('\n'), "should be pretty-printed");
+        assert!(formatted.contains("\"key\""));
+    }
+
+    #[test]
+    fn formatted_extra_data_returns_raw_when_not_json() {
+        let mut entry = make_entry(LogLevel::Info, "msg", "Comp", None, TS);
+        entry.extra_data = Some("plain text".to_string());
+        assert_eq!(entry.formatted_extra_data().unwrap(), "plain text");
+    }
+
+    #[test]
+    fn formatted_extra_data_none_when_no_extra() {
+        let entry = make_entry(LogLevel::Info, "msg", "Comp", None, TS);
+        assert!(entry.formatted_extra_data().is_none());
+    }
+
+    // --- LogFilter::matches ---
+
+    #[test]
+    fn filter_no_constraints_matches_everything() {
+        let filter = LogFilter::default();
+        let entry = make_entry(LogLevel::Debug, "any", "Any", None, TS);
+        assert!(filter.matches(&entry));
+    }
+
+    #[test]
+    fn filter_min_level_excludes_lower_severity() {
+        let filter = LogFilter { min_level: Some(LogLevel::Warning), ..Default::default() };
+        assert!(filter.matches(&make_entry(LogLevel::Error,   "m", "C", None, TS)));
+        assert!(filter.matches(&make_entry(LogLevel::Warning, "m", "C", None, TS)));
+        assert!(!filter.matches(&make_entry(LogLevel::Info,   "m", "C", None, TS)));
+        assert!(!filter.matches(&make_entry(LogLevel::Debug,  "m", "C", None, TS)));
+    }
+
+    #[test]
+    fn filter_search_text_matches_message_case_insensitive() {
+        let filter = LogFilter { search_text: Some("TOKEN".to_string()), ..Default::default() };
+        assert!(filter.matches(&make_entry(LogLevel::Info, "Invalid token received", "C", None, TS)));
+        assert!(!filter.matches(&make_entry(LogLevel::Info, "No match here", "C", None, TS)));
+    }
+
+    #[test]
+    fn filter_search_text_matches_component() {
+        let filter = LogFilter { search_text: Some("authservice".to_string()), ..Default::default() };
+        assert!(filter.matches(&make_entry(LogLevel::Info, "msg", "Vendor.AuthService", None, TS)));
+        assert!(!filter.matches(&make_entry(LogLevel::Info, "msg", "Vendor.Other", None, TS)));
+    }
+
+    #[test]
+    fn filter_component_filter_partial_match() {
+        let filter = LogFilter { component_filter: Some("sugar".to_string()), ..Default::default() };
+        assert!(filter.matches(&make_entry(LogLevel::Info, "m", "WeberHaus.SugarCrmService", None, TS)));
+        assert!(!filter.matches(&make_entry(LogLevel::Info, "m", "WeberHaus.OtherService", None, TS)));
+    }
+
+    #[test]
+    fn filter_request_id_matches_exact() {
+        let filter = LogFilter { request_id: Some("abc123".to_string()), ..Default::default() };
+        assert!(filter.matches(&make_entry(LogLevel::Info, "m", "C", Some("abc123"), TS)));
+        assert!(!filter.matches(&make_entry(LogLevel::Info, "m", "C", Some("xyz999"), TS)));
+        assert!(!filter.matches(&make_entry(LogLevel::Info, "m", "C", None, TS)));
+    }
+
+    #[test]
+    fn filter_message_prefix_matches() {
+        let filter = LogFilter { message_prefix: Some("crmRequest".to_string()), ..Default::default() };
+        assert!(filter.matches(&make_entry(LogLevel::Info, "crmRequest - {\"key\":1}", "C", None, TS)));
+        assert!(!filter.matches(&make_entry(LogLevel::Info, "otherMessage - {\"key\":1}", "C", None, TS)));
+    }
+
+    #[test]
+    fn filter_date_from_excludes_earlier_entries() {
+        use chrono::NaiveDate;
+        let filter = LogFilter {
+            date_from: Some(NaiveDate::from_ymd_opt(2026, 4, 3).unwrap()),
+            ..Default::default()
+        };
+        // Entry is 2026-04-02 — should be excluded
+        assert!(!filter.matches(&make_entry(LogLevel::Info, "m", "C", None, TS)));
+        // Entry on the same day as from — should pass
+        let entry_on_date = make_entry(LogLevel::Info, "m", "C", None, "Fri, 03 Apr 2026 08:00:00 +0200");
+        assert!(filter.matches(&entry_on_date));
+    }
+
+    #[test]
+    fn filter_date_to_excludes_later_entries() {
+        use chrono::NaiveDate;
+        let filter = LogFilter {
+            date_to: Some(NaiveDate::from_ymd_opt(2026, 4, 1).unwrap()),
+            ..Default::default()
+        };
+        assert!(!filter.matches(&make_entry(LogLevel::Info, "m", "C", None, TS)));
+        let entry_before = make_entry(LogLevel::Info, "m", "C", None, "Wed, 01 Apr 2026 08:00:00 +0200");
+        assert!(filter.matches(&entry_before));
+    }
+
+    #[test]
+    fn filter_combined_level_and_search() {
+        let filter = LogFilter {
+            min_level: Some(LogLevel::Warning),
+            search_text: Some("token".to_string()),
+            ..Default::default()
+        };
+        assert!(filter.matches(&make_entry(LogLevel::Error, "bad token", "C", None, TS)));
+        assert!(!filter.matches(&make_entry(LogLevel::Info,  "bad token", "C", None, TS)));
+        assert!(!filter.matches(&make_entry(LogLevel::Error, "no match",  "C", None, TS)));
+    }
+
+    // --- LogFilter::is_active ---
+
+    #[test]
+    fn filter_is_active_default_is_false() {
+        assert!(!LogFilter::default().is_active());
+    }
+
+    #[test]
+    fn filter_is_active_true_when_any_field_set() {
+        assert!(LogFilter { min_level: Some(LogLevel::Error), ..Default::default() }.is_active());
+        assert!(LogFilter { search_text: Some("x".to_string()), ..Default::default() }.is_active());
+        assert!(LogFilter { component_filter: Some("x".to_string()), ..Default::default() }.is_active());
+        assert!(LogFilter { request_id: Some("x".to_string()), ..Default::default() }.is_active());
+        assert!(LogFilter { message_prefix: Some("x".to_string()), ..Default::default() }.is_active());
+    }
+
+    // --- LogFilter::clear ---
+
+    #[test]
+    fn filter_clear_resets_all_fields() {
+        let mut filter = LogFilter {
+            min_level: Some(LogLevel::Error),
+            search_text: Some("x".to_string()),
+            component_filter: Some("y".to_string()),
+            request_id: Some("z".to_string()),
+            message_prefix: Some("p".to_string()),
+            ..Default::default()
+        };
+        filter.clear();
+        assert!(!filter.is_active());
+    }
+
+    // --- LogFilter::date_label ---
+
+    #[test]
+    fn date_label_none_when_no_dates() {
+        assert!(LogFilter::default().date_label().is_none());
+    }
+
+    #[test]
+    fn date_label_single_day() {
+        use chrono::NaiveDate;
+        let d = NaiveDate::from_ymd_opt(2026, 4, 2).unwrap();
+        let filter = LogFilter { date_from: Some(d), date_to: Some(d), ..Default::default() };
+        assert_eq!(filter.date_label().unwrap(), "02.04.2026");
+    }
+
+    #[test]
+    fn date_label_range() {
+        use chrono::NaiveDate;
+        let from = NaiveDate::from_ymd_opt(2026, 4, 1).unwrap();
+        let to   = NaiveDate::from_ymd_opt(2026, 4, 5).unwrap();
+        let filter = LogFilter { date_from: Some(from), date_to: Some(to), ..Default::default() };
+        assert_eq!(filter.date_label().unwrap(), "01.04.2026 \u{2013} 05.04.2026");
+    }
+
+    #[test]
+    fn date_label_only_from() {
+        use chrono::NaiveDate;
+        let d = NaiveDate::from_ymd_opt(2026, 4, 1).unwrap();
+        let filter = LogFilter { date_from: Some(d), ..Default::default() };
+        assert_eq!(filter.date_label().unwrap(), "ab 01.04.2026");
+    }
+
+    #[test]
+    fn date_label_only_to() {
+        use chrono::NaiveDate;
+        let d = NaiveDate::from_ymd_opt(2026, 4, 5).unwrap();
+        let filter = LogFilter { date_to: Some(d), ..Default::default() };
+        assert_eq!(filter.date_label().unwrap(), "bis 05.04.2026");
+    }
+
+    // --- message_prefix ---
+
+    #[test]
+    fn message_prefix_strips_json_object() {
+        assert_eq!(message_prefix("crmRequest - {\"key\":1}"), "crmRequest");
+    }
+
+    #[test]
+    fn message_prefix_strips_json_array() {
+        assert_eq!(message_prefix("items - [{\"id\":1}]"), "items");
+    }
+
+    #[test]
+    fn message_prefix_no_json_returns_full_message() {
+        assert_eq!(message_prefix("Simple error message"), "Simple error message");
+    }
+
+    #[test]
+    fn message_prefix_trims_whitespace() {
+        assert_eq!(message_prefix("  trimmed  "), "trimmed");
+    }
+
+    // --- parse_date_input ---
+
+    #[test]
+    fn parse_date_input_german_format() {
+        use chrono::NaiveDate;
+        assert_eq!(
+            parse_date_input("02.04.2026"),
+            Some(NaiveDate::from_ymd_opt(2026, 4, 2).unwrap())
+        );
+    }
+
+    #[test]
+    fn parse_date_input_iso_format() {
+        use chrono::NaiveDate;
+        assert_eq!(
+            parse_date_input("2026-04-02"),
+            Some(NaiveDate::from_ymd_opt(2026, 4, 2).unwrap())
+        );
+    }
+
+    #[test]
+    fn parse_date_input_trims_whitespace() {
+        use chrono::NaiveDate;
+        assert_eq!(
+            parse_date_input("  2026-04-02  "),
+            Some(NaiveDate::from_ymd_opt(2026, 4, 2).unwrap())
+        );
+    }
+
+    #[test]
+    fn parse_date_input_invalid_returns_none() {
+        assert!(parse_date_input("not-a-date").is_none());
+        assert!(parse_date_input("").is_none());
+    }
+}

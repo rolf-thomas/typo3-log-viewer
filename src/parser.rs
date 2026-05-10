@@ -288,13 +288,20 @@ pub fn extract_all_json(text: &str) -> Vec<(usize, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::LogLevel;
+
+    const TS: &str = "Thu, 02 Apr 2026";
+
+    fn line(level: &str, msg: &str) -> String {
+        format!(r#"{} 12:00:02 +0200 [{}] request="req1" component="Vendor.Ext": {}"#, TS, level, msg)
+    }
+
+    // --- parse_log_line: alle Log-Level ---
 
     #[test]
     fn test_parse_error_log() {
-        let line = r#"Thu, 02 Apr 2026 12:00:02 +0200 [ERROR] request="043d54b20b2e8" component="Vendor.Extension.Service.ProductCrmRestService": Client error"#;
-
-        let entry = parse_log_line(line, 1).expect("Should parse");
-
+        let l = r#"Thu, 02 Apr 2026 12:00:02 +0200 [ERROR] request="043d54b20b2e8" component="Vendor.Extension.Service.ProductCrmRestService": Client error"#;
+        let entry = parse_log_line(l, 1).expect("Should parse");
         assert_eq!(entry.level, LogLevel::Error);
         assert_eq!(entry.request_id, Some("043d54b20b2e8".to_string()));
         assert!(entry.component.contains("ProductCrmRestService"));
@@ -303,13 +310,73 @@ mod tests {
 
     #[test]
     fn test_parse_debug_log() {
-        let line = r#"Thu, 02 Apr 2026 11:06:55 +0200 [DEBUG] request="a03b3f7c34daa" component="Vendor.Extension.Service.ProductCrmRestService": crmRequest - {"endpoint":"https://example.com"}"#;
-
-        let entry = parse_log_line(line, 1).expect("Should parse");
-
+        let l = r#"Thu, 02 Apr 2026 11:06:55 +0200 [DEBUG] request="a03b3f7c34daa" component="Vendor.Extension.Service.ProductCrmRestService": crmRequest - {"endpoint":"https://example.com"}"#;
+        let entry = parse_log_line(l, 1).expect("Should parse");
         assert_eq!(entry.level, LogLevel::Debug);
         assert!(entry.message.contains("crmRequest"));
     }
+
+    #[test]
+    fn test_parse_warning_log() {
+        let entry = parse_log_line(&line("WARNING", "Low disk space"), 1).expect("Should parse");
+        assert_eq!(entry.level, LogLevel::Warning);
+    }
+
+    #[test]
+    fn test_parse_info_log() {
+        let entry = parse_log_line(&line("INFO", "Started"), 1).expect("Should parse");
+        assert_eq!(entry.level, LogLevel::Info);
+    }
+
+    #[test]
+    fn test_parse_notice_log() {
+        let entry = parse_log_line(&line("NOTICE", "Cache cleared"), 1).expect("Should parse");
+        assert_eq!(entry.level, LogLevel::Notice);
+    }
+
+    #[test]
+    fn test_parse_critical_log() {
+        let entry = parse_log_line(&line("CRITICAL", "DB unreachable"), 1).expect("Should parse");
+        assert_eq!(entry.level, LogLevel::Critical);
+    }
+
+    #[test]
+    fn test_parse_alert_log() {
+        let entry = parse_log_line(&line("ALERT", "Disk full"), 1).expect("Should parse");
+        assert_eq!(entry.level, LogLevel::Alert);
+    }
+
+    #[test]
+    fn test_parse_emergency_log() {
+        let entry = parse_log_line(&line("EMERGENCY", "System down"), 1).expect("Should parse");
+        assert_eq!(entry.level, LogLevel::Emergency);
+    }
+
+    // --- parse_log_line: leere request_id ---
+
+    #[test]
+    fn test_parse_empty_request_id_becomes_none() {
+        let l = r#"Thu, 02 Apr 2026 12:00:02 +0200 [INFO] request="" component="Vendor.Ext": msg"#;
+        let entry = parse_log_line(l, 1).expect("Should parse");
+        assert!(entry.request_id.is_none());
+    }
+
+    // --- parse_log_line: ungültige Zeilen ---
+
+    #[test]
+    fn test_parse_invalid_line_returns_none() {
+        assert!(parse_log_line("this is not a log line", 1).is_none());
+        assert!(parse_log_line("", 1).is_none());
+        assert!(parse_log_line(r#"{"json":"only"}"#, 1).is_none());
+    }
+
+    #[test]
+    fn test_parse_line_number_is_stored() {
+        let entry = parse_log_line(&line("INFO", "msg"), 42).expect("Should parse");
+        assert_eq!(entry.line_number, 42);
+    }
+
+    // --- parse_log_line: Multiline ---
 
     #[test]
     fn test_parse_multiline() {
@@ -324,5 +391,109 @@ Thu, 02 Apr 2026 13:00:02 +0200 [ERROR] request="def456" component="Test": Anoth
         assert!(entries[0].extra_data.is_some());
         assert!(entries[0].extra_data.as_ref().unwrap().contains("invalid_grant"));
         assert!(entries[1].extra_data.is_none());
+    }
+
+    #[test]
+    fn test_parse_multiple_extra_lines() {
+        let content = "Thu, 02 Apr 2026 12:00:00 +0200 [ERROR] request=\"r1\" component=\"C\": msg\nline2\nline3\n\nThu, 02 Apr 2026 13:00:00 +0200 [INFO] request=\"r2\" component=\"C\": second";
+        let entries = parse_log_content(content);
+        assert_eq!(entries.len(), 2);
+        let extra = entries[0].extra_data.as_ref().unwrap();
+        assert!(extra.contains("line2"));
+        assert!(extra.contains("line3"));
+    }
+
+    #[test]
+    fn test_parse_trailing_empty_lines_stripped_from_extra() {
+        let content = "Thu, 02 Apr 2026 12:00:00 +0200 [ERROR] request=\"r1\" component=\"C\": msg\nextra\n\n";
+        let entries = parse_log_content(content);
+        assert_eq!(entries.len(), 1);
+        let extra = entries[0].extra_data.as_ref().unwrap();
+        assert!(!extra.ends_with('\n'));
+    }
+
+    // --- StreamParser direkt ---
+
+    #[test]
+    fn stream_parser_single_entry_via_finish() {
+        let mut p = StreamParser::with_line_offset(0);
+        assert!(p.feed_line(&line("ERROR", "msg")).is_none());
+        let consumed = p.lines_consumed();
+        let entry = p.finish().expect("Should yield entry");
+        assert_eq!(entry.level, LogLevel::Error);
+        assert_eq!(consumed, 1);
+    }
+
+    #[test]
+    fn stream_parser_orphan_lines_are_ignored() {
+        let mut p = StreamParser::with_line_offset(0);
+        // extra line before any header
+        assert!(p.feed_line("orphan line").is_none());
+        assert!(p.finish().is_none());
+    }
+
+    #[test]
+    fn stream_parser_line_offset_is_respected() {
+        let mut p = StreamParser::with_line_offset(10);
+        p.feed_line(&line("INFO", "msg"));
+        let entry = p.finish().unwrap();
+        assert_eq!(entry.line_number, 11);
+    }
+
+    #[test]
+    fn stream_parser_lines_consumed_tracks_all_lines() {
+        let mut p = StreamParser::with_line_offset(0);
+        p.feed_line(&line("ERROR", "first"));
+        p.feed_line("extra data");
+        p.feed_line(&line("INFO", "second"));
+        let consumed = p.lines_consumed();
+        p.finish();
+        assert_eq!(consumed, 3);
+    }
+
+    // --- strip_line_ending (indirekt via parse_log_stream mit CRLF-Input) ---
+
+    #[test]
+    fn parse_log_stream_handles_crlf_line_endings() {
+        let content = format!("{}\r\n", line("ERROR", "msg"));
+        let cursor = std::io::Cursor::new(content.as_bytes());
+        let (entries, _) = parse_log_stream(cursor, 0).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].message, "msg");
+    }
+
+    // --- extract_json_from_message ---
+
+    #[test]
+    fn extract_json_from_message_finds_json_object() {
+        let msg = r#"Request failed: {"code":404,"reason":"not found"}"#;
+        let (prefix, json) = extract_json_from_message(msg).expect("Should find JSON");
+        assert_eq!(prefix, "Request failed");
+        assert!(json.contains("404"));
+    }
+
+    #[test]
+    fn extract_json_from_message_finds_json_array() {
+        let msg = r#"items: [1,2,3]"#;
+        let (prefix, json) = extract_json_from_message(msg).expect("Should find JSON");
+        assert!(json.contains('1'));
+        assert!(!prefix.is_empty());
+    }
+
+    #[test]
+    fn extract_json_from_message_returns_none_without_json() {
+        assert!(extract_json_from_message("plain error message").is_none());
+    }
+
+    #[test]
+    fn extract_json_from_message_returns_none_for_invalid_json() {
+        assert!(extract_json_from_message("prefix {not valid json}").is_none());
+    }
+
+    #[test]
+    fn extract_json_from_message_formats_pretty() {
+        let msg = r#"msg {"a":1,"b":2}"#;
+        let (_, json) = extract_json_from_message(msg).unwrap();
+        assert!(json.contains('\n'), "should be pretty-printed");
     }
 }
