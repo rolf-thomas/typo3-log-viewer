@@ -1509,6 +1509,8 @@ pub fn handle_input(app: &mut App) -> io::Result<()> {
                 KeyCode::Esc => {
                     if app.filter.is_active() {
                         app.clear_filter();
+                    } else if !app.new_line_numbers.is_empty() {
+                        app.new_line_numbers.clear();
                     } else if app.has_file_selector {
                         app.should_go_back = true;
                     } else {
