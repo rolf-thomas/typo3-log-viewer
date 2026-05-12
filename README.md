@@ -53,6 +53,10 @@ Fertige Binaries für alle Plattformen unter [Releases](https://github.com/rolf-
 
 Das Binary `typo3-log-viewer-*-linux-x86_64-musl.tar.gz` kann bei den meisten shared Hosting Anbietern in `~/.local/bin` plaziert von überall aufgerufen werden.
 
+```bash
+curl -L https://github.com/rolf-thomas/typo3-log-viewer/releases/download/v*/typo3-log-viewer-*-linux-x86_64-musl.tar.gz | tar -xz
+```
+
 ### Aus dem Quellcode bauen
 
 Voraussetzung: [Rust >= 1.75](https://rustup.rs/)
