@@ -102,7 +102,6 @@ gh release create "$TAG" \
   --repo "$REPO" \
   --title "$TAG" \
   --generate-notes \
-  --tag "$TAG" \
   dist/*.tar.gz
 
 RELEASE_URL=$(gh release view "$TAG" --repo "$REPO" --json url -q .url)
