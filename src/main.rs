@@ -58,7 +58,7 @@ fn print_usage() {
     eprintln!();
     eprintln!("Allgemein:");
     eprintln!("  t               Zeitkorrektur: dann + / − (je 1h) oder 0 (Reset)");
-    eprintln!("  Backspace       Log-Datei leeren (mit Bestätigung)");
+    eprintln!("  Backspace       Löschen: Zeile / Selektion / ganze Datei");
     eprintln!("  ?               Hilfe (im TUI)");
     eprintln!("  q / ESC         Beenden");
 }

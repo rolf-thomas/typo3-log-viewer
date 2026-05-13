@@ -27,6 +27,8 @@ pub enum AppView {
     Filter,
     Help,
     DateMenu,
+    /// Auswahl-Menü beim Drücken von Backspace: Zeile / Selektion / ganze Datei
+    DeleteMenu,
     /// Bestätigungs-Dialog vor dem Leeren der Log-Datei
     ConfirmTruncate,
 }
@@ -243,6 +245,140 @@ impl App {
             Ok(()) => self.set_status_message("Inhalt in die Zwischenablage kopiert"),
             Err(e) => self.set_status_message(&format!("Kopieren fehlgeschlagen: {}", e)),
         }
+    }
+
+    /// Löscht den aktuell selektierten Eintrag (samt seiner Folgezeilen wie
+    /// JSON-Extras und nachfolgender Leerzeilen bis zum nächsten Eintrag)
+    /// aus der Log-Datei.
+    pub fn delete_selected_entry(&mut self) {
+        let Some(&entry_idx) = self
+            .list_state
+            .selected()
+            .and_then(|i| self.filtered_indices.get(i))
+        else {
+            self.set_status_message("Kein Eintrag ausgewählt");
+            return;
+        };
+
+        let prev_selected = self.list_state.selected();
+        match self.rewrite_file_without_entries(&[entry_idx]) {
+            Ok(()) => {
+                if let Some(prev) = prev_selected {
+                    let new_len = self.filtered_indices.len();
+                    if new_len == 0 {
+                        self.list_state.select(None);
+                    } else {
+                        self.list_state.select(Some(prev.min(new_len - 1)));
+                    }
+                }
+                self.set_status_message("Eintrag gelöscht");
+            }
+            Err(e) => {
+                self.set_status_message(&format!("Löschen fehlgeschlagen: {}", e));
+            }
+        }
+    }
+
+    /// Löscht alle aktuell sichtbaren (gefilterten) Einträge aus der Log-Datei.
+    pub fn delete_filtered_entries(&mut self) {
+        if self.filtered_indices.is_empty() {
+            self.set_status_message("Keine Einträge in der Selektion");
+            return;
+        }
+        let count = self.filtered_indices.len();
+        let indices: Vec<usize> = self.filtered_indices.clone();
+        match self.rewrite_file_without_entries(&indices) {
+            Ok(()) => {
+                if self.filtered_indices.is_empty() {
+                    self.list_state.select(None);
+                } else {
+                    self.list_state.select(Some(0));
+                }
+                self.set_status_message(&format!("{} Einträge gelöscht", count));
+            }
+            Err(e) => {
+                self.set_status_message(&format!("Löschen fehlgeschlagen: {}", e));
+            }
+        }
+    }
+
+    /// Schreibt die Log-Datei ohne die angegebenen Einträge neu. Berechnet
+    /// für jeden zu löschenden Eintrag den Zeilenbereich aus
+    /// `line_number` bis zum Start des Folge-Eintrags (oder Dateiende für
+    /// den letzten Eintrag) und lädt die Datei anschließend frisch nach.
+    fn rewrite_file_without_entries(&mut self, entry_indices: &[usize]) -> io::Result<()> {
+        use std::collections::HashSet;
+        use std::fs;
+
+        let content = fs::read_to_string(&self.file_path)?;
+        let has_trailing_newline = content.ends_with('\n');
+        let original_lines: Vec<&str> = content.split('\n').collect();
+        // `split('\n')` liefert bei "a\nb\n" -> ["a","b",""] — die letzte
+        // leere Zeile gehört nicht zum Inhalt, sondern resultiert aus dem
+        // abschließenden Newline.
+        let line_count = if has_trailing_newline && !original_lines.is_empty() {
+            original_lines.len() - 1
+        } else {
+            original_lines.len()
+        };
+
+        let mut to_delete = vec![false; line_count];
+        for &idx in entry_indices {
+            let Some(entry) = self.entries.get(idx) else { continue };
+            let start = entry.line_number;
+            let end = self
+                .entries
+                .get(idx + 1)
+                .map(|next| next.line_number - 1)
+                .unwrap_or(line_count);
+            for line in start..=end {
+                if line >= 1 && line <= line_count {
+                    to_delete[line - 1] = true;
+                }
+            }
+        }
+
+        let kept_set: HashSet<usize> = (0..line_count).filter(|i| !to_delete[*i]).collect();
+        let mut new_content = String::new();
+        let mut first = true;
+        for i in 0..line_count {
+            if kept_set.contains(&i) {
+                if !first {
+                    new_content.push('\n');
+                }
+                new_content.push_str(original_lines[i]);
+                first = false;
+            }
+        }
+        if !new_content.is_empty() && has_trailing_newline {
+            new_content.push('\n');
+        }
+
+        fs::write(&self.file_path, &new_content)?;
+        self.reload_full()?;
+        Ok(())
+    }
+
+    /// Komplettes Neuladen vom Dateisystem, ohne Diff-Markierung neuer Zeilen.
+    fn reload_full(&mut self) -> io::Result<()> {
+        use std::fs::File;
+        use std::io::BufReader;
+
+        let file = File::open(&self.file_path)?;
+        let file_size = file.metadata()?.len();
+        let reader = BufReader::new(file);
+        let (new_entries, lines_read) = crate::parser::parse_log_stream(reader, 0)?;
+
+        self.seen_line_numbers.clear();
+        self.new_line_numbers.clear();
+        for entry in &new_entries {
+            self.seen_line_numbers.insert(entry.line_number);
+        }
+        self.entries = new_entries;
+        self.lines_read = lines_read;
+        self.file_size = file_size;
+        self.apply_filter();
+        Ok(())
     }
 
     /// Schreibt die Log-Datei auf 0 Byte und setzt den In-Memory-Stand
@@ -1023,7 +1159,7 @@ fn render_help(f: &mut Frame, area: Rect) {
         Line::from(Span::styled("Allgemein:", Style::default().add_modifier(Modifier::BOLD))),
         Line::from("  t          Zeitkorrektur: dann +/− (Stunde) oder 0 (Reset)"),
         Line::from("  ?          Diese Hilfe"),
-        Line::from("  Backspace  Log-Datei leeren (mit Bestätigung)"),
+        Line::from("  Backspace  Löschen: Zeile / Selektion / Datei"),
         Line::from("  q/ESC      Beenden / Zurück"),
         Line::from(""),
         Line::from(Span::styled(
@@ -1085,6 +1221,64 @@ fn render_date_menu(f: &mut Frame, app: &App, area: Rect) {
     );
 
     let popup_area = centered_rect(50, 60, area);
+    f.render_widget(Clear, popup_area);
+    f.render_widget(popup, popup_area);
+}
+
+/// Rendert das Auswahl-Menü beim Drücken von Backspace
+fn render_delete_menu(f: &mut Frame, app: &App, area: Rect) {
+    let filter_active = app.filter.is_active();
+    let total = app.entries.len();
+    let filtered = app.filtered_indices.len();
+    let has_selection = app.list_state.selected().is_some();
+
+    let mut lines = vec![
+        Line::from(Span::styled(
+            " Löschen",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+    ];
+
+    if has_selection {
+        lines.push(Line::from("  [1]  Aktuelle Zeile löschen"));
+    } else {
+        lines.push(Line::from(Span::styled(
+            "  [1]  Aktuelle Zeile löschen  (keine Auswahl)",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
+    if filter_active {
+        lines.push(Line::from(format!(
+            "  [2]  Aktuelle Selektion löschen  ({} Einträge)",
+            filtered
+        )));
+    } else {
+        lines.push(Line::from(Span::styled(
+            "  [2]  Aktuelle Selektion löschen  (kein Filter aktiv)",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
+    lines.push(Line::from(format!(
+        "  [3]  Gesamte Log-Datei leeren  ({} Einträge)",
+        total
+    )));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  ESC  Abbrechen",
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    let popup = Paragraph::new(lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" Löschen ")
+            .border_style(Style::default().fg(Color::Red)),
+    );
+
+    let popup_area = centered_rect(60, 40, area);
     f.render_widget(Clear, popup_area);
     f.render_widget(popup, popup_area);
 }
@@ -1268,6 +1462,10 @@ pub fn render(f: &mut Frame, app: &mut App) {
             render_list(f, app, main_area);
             render_date_menu(f, app, main_area);
         }
+        AppView::DeleteMenu => {
+            render_list(f, app, main_area);
+            render_delete_menu(f, app, main_area);
+        }
         AppView::ConfirmTruncate => {
             render_list(f, app, main_area);
             render_confirm_truncate(f, app, main_area);
@@ -1380,6 +1578,32 @@ pub fn handle_input(app: &mut App) -> io::Result<()> {
             // Hilfe-Ansicht
             if app.view == AppView::Help {
                 app.view = AppView::List;
+                return Ok(());
+            }
+
+            // Auswahl-Menü beim Drücken von Backspace
+            if app.view == AppView::DeleteMenu {
+                match key.code {
+                    KeyCode::Esc | KeyCode::Backspace | KeyCode::Char('q') => {
+                        app.view = AppView::List;
+                    }
+                    KeyCode::Char('1') => {
+                        if app.list_state.selected().is_some() {
+                            app.delete_selected_entry();
+                        }
+                        app.view = AppView::List;
+                    }
+                    KeyCode::Char('2') => {
+                        if app.filter.is_active() {
+                            app.delete_filtered_entries();
+                            app.view = AppView::List;
+                        }
+                    }
+                    KeyCode::Char('3') => {
+                        app.view = AppView::ConfirmTruncate;
+                    }
+                    _ => {}
+                }
                 return Ok(());
             }
 
@@ -1580,7 +1804,7 @@ pub fn handle_input(app: &mut App) -> io::Result<()> {
                 }
                 KeyCode::Backspace => {
                     // Bewusst nicht in der Statusleiste beworben — nur über Hilfe.
-                    app.view = AppView::ConfirmTruncate;
+                    app.view = AppView::DeleteMenu;
                 }
                 _ => {}
             }
@@ -2118,6 +2342,144 @@ mod tests {
         assert!(changed);
         assert_eq!(app.entries.len(), 2);
         assert!(app.filtered_indices.len() == 2);
+
+        let _ = fs::remove_file(&path);
+    }
+
+    // -- delete_selected_entry / delete_filtered_entries ------------------
+
+    #[test]
+    fn delete_selected_entry_removes_only_that_entry_from_file_and_state() {
+        let path = unique_temp_path("delete_selected");
+        write_log_lines(&path, 5);
+        let mut app = load_app_from(&path);
+        // Mittlerer Eintrag (line_number 3, Position 2)
+        app.list_state.select(Some(2));
+
+        app.delete_selected_entry();
+
+        assert_eq!(app.entries.len(), 4);
+        let messages: Vec<&str> = app.entries.iter().map(|e| e.message.as_str()).collect();
+        assert_eq!(messages, vec!["Entry 1", "Entry 2", "Entry 4", "Entry 5"]);
+
+        // Datei enthält die gelöschte Nachricht nicht mehr
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(!content.contains("Entry 3"));
+        assert!(content.contains("Entry 4"));
+
+        // Selektion bleibt auf gleichem Index, jetzt zeigt sie auf "Entry 4"
+        assert_eq!(app.list_state.selected(), Some(2));
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn delete_selected_entry_removes_multiline_entry_with_extra_data() {
+        // Eintrag mit JSON-Extras: alle zugehörigen Zeilen müssen verschwinden.
+        let path = unique_temp_path("delete_multiline");
+        let content = "Thu, 02 Apr 2026 12:00:00 +0200 [INFO] request=\"r1\" component=\"Test\": Entry 1\n\
+                       Thu, 02 Apr 2026 12:01:00 +0200 [INFO] request=\"r2\" component=\"Test\": Entry 2\n\
+                       {\"key\":\"value\"}\n\
+                       \n\
+                       Thu, 02 Apr 2026 12:02:00 +0200 [INFO] request=\"r3\" component=\"Test\": Entry 3\n";
+        fs::write(&path, content).unwrap();
+        let mut app = load_app_from(&path);
+        assert_eq!(app.entries.len(), 3);
+        // Lösche Eintrag 2 (mit Extras)
+        app.list_state.select(Some(1));
+
+        app.delete_selected_entry();
+
+        assert_eq!(app.entries.len(), 2);
+        let on_disk = fs::read_to_string(&path).unwrap();
+        assert!(!on_disk.contains("Entry 2"));
+        assert!(!on_disk.contains("\"key\""));
+        assert!(on_disk.contains("Entry 1"));
+        assert!(on_disk.contains("Entry 3"));
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn delete_selected_entry_last_entry_keeps_state_consistent() {
+        let path = unique_temp_path("delete_last");
+        write_log_lines(&path, 3);
+        let mut app = load_app_from(&path);
+        app.list_state.select(Some(2));
+
+        app.delete_selected_entry();
+
+        assert_eq!(app.entries.len(), 2);
+        // Selektion folgt zum neuen letzten Eintrag
+        assert_eq!(app.list_state.selected(), Some(1));
+        let on_disk = fs::read_to_string(&path).unwrap();
+        assert!(!on_disk.contains("Entry 3"));
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn delete_selected_entry_without_selection_only_sets_status() {
+        let path = unique_temp_path("delete_no_sel");
+        write_log_lines(&path, 2);
+        let mut app = load_app_from(&path);
+        app.list_state.select(None);
+        let before = fs::read_to_string(&path).unwrap();
+
+        app.delete_selected_entry();
+
+        // Datei unverändert
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
+        assert_eq!(app.entries.len(), 2);
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn delete_filtered_entries_removes_only_filtered_subset() {
+        let path = unique_temp_path("delete_filtered");
+        // 5 Einträge: 3 INFO, 2 ERROR — wir filtern auf ERROR und löschen die.
+        let content = "Thu, 02 Apr 2026 12:00:00 +0200 [INFO] request=\"r1\" component=\"Test\": info one\n\
+                       Thu, 02 Apr 2026 12:01:00 +0200 [ERROR] request=\"r2\" component=\"Test\": error one\n\
+                       Thu, 02 Apr 2026 12:02:00 +0200 [INFO] request=\"r3\" component=\"Test\": info two\n\
+                       Thu, 02 Apr 2026 12:03:00 +0200 [ERROR] request=\"r4\" component=\"Test\": error two\n\
+                       Thu, 02 Apr 2026 12:04:00 +0200 [INFO] request=\"r5\" component=\"Test\": info three\n";
+        fs::write(&path, content).unwrap();
+        let mut app = load_app_from(&path);
+        app.set_level_filter(Some(LogLevel::Error));
+        assert_eq!(app.filtered_indices.len(), 2);
+
+        app.delete_filtered_entries();
+
+        // Filter ist noch aktiv (Error), aber keine Error-Einträge mehr da
+        assert_eq!(app.filtered_indices.len(), 0);
+        assert_eq!(app.entries.len(), 3);
+        let on_disk = fs::read_to_string(&path).unwrap();
+        assert!(!on_disk.contains("error one"));
+        assert!(!on_disk.contains("error two"));
+        assert!(on_disk.contains("info one"));
+        assert!(on_disk.contains("info two"));
+        assert!(on_disk.contains("info three"));
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn delete_filtered_entries_updates_file_size_and_lines_read() {
+        let path = unique_temp_path("delete_filtered_size");
+        write_log_lines(&path, 5);
+        let mut app = load_app_from(&path);
+        // Filter so setzen, dass nur ein Eintrag übrig bleibt
+        app.set_search_filter(Some("Entry 2".to_string()));
+        assert_eq!(app.filtered_indices.len(), 1);
+
+        app.delete_filtered_entries();
+
+        let on_disk = fs::read_to_string(&path).unwrap();
+        assert!(!on_disk.contains("Entry 2"));
+        assert_eq!(app.file_size, fs::metadata(&path).unwrap().len());
+        assert_eq!(app.lines_read, 4);
+        assert_eq!(app.entries.len(), 4);
 
         let _ = fs::remove_file(&path);
     }
