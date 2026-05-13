@@ -98,6 +98,10 @@ pub struct App {
     pub timestamp_offset_hours: i32,
     /// Wartet auf +/−/0 nach Drücken von 't'
     time_adjust_mode: bool,
+    /// Anker einer Mehrfach-Markierung (Position innerhalb `filtered_indices`).
+    /// Wird per Shift+Up/Down gesetzt; der zweite Endpunkt entspricht der
+    /// aktuellen Selektion.
+    mark_anchor: Option<usize>,
 }
 
 const STATUS_MESSAGE_TTL: Duration = Duration::from_secs(2);
@@ -132,6 +136,7 @@ impl App {
             status_message: None,
             timestamp_offset_hours: 0,
             time_adjust_mode: false,
+            mark_anchor: None,
         };
 
         // Wähle den letzten (neuesten) Eintrag
@@ -178,27 +183,19 @@ impl App {
 
     /// Navigation: nach oben
     pub fn move_up(&mut self) {
-        if self.filtered_indices.is_empty() {
-            return;
-        }
-        let selected = self.list_state.selected().unwrap_or(0);
-        self.list_state.select(Some(selected.saturating_sub(1)));
-        self.auto_tail = false;
+        self.mark_anchor = None;
+        self.move_up_keep_mark();
     }
 
     /// Navigation: nach unten
     pub fn move_down(&mut self) {
-        if self.filtered_indices.is_empty() {
-            return;
-        }
-        let selected = self.list_state.selected().unwrap_or(0);
-        let next = (selected + 1).min(self.filtered_indices.len() - 1);
-        self.list_state.select(Some(next));
-        self.auto_tail = next + 1 == self.filtered_indices.len();
+        self.mark_anchor = None;
+        self.move_down_keep_mark();
     }
 
     /// Navigation: Seite hoch
     pub fn page_up(&mut self, page_size: usize) {
+        self.mark_anchor = None;
         if let Some(selected) = self.list_state.selected() {
             let new_selected = selected.saturating_sub(page_size);
             self.list_state.select(Some(new_selected));
@@ -208,6 +205,7 @@ impl App {
 
     /// Navigation: Seite runter
     pub fn page_down(&mut self, page_size: usize) {
+        self.mark_anchor = None;
         if let Some(selected) = self.list_state.selected() {
             let new_selected = (selected + page_size).min(self.filtered_indices.len().saturating_sub(1));
             self.list_state.select(Some(new_selected));
@@ -217,6 +215,7 @@ impl App {
 
     /// Navigation: zum Anfang
     pub fn go_to_start(&mut self) {
+        self.mark_anchor = None;
         if !self.filtered_indices.is_empty() {
             self.list_state.select(Some(0));
             self.auto_tail = false;
@@ -225,10 +224,79 @@ impl App {
 
     /// Navigation: zum Ende
     pub fn go_to_end(&mut self) {
+        self.mark_anchor = None;
         if !self.filtered_indices.is_empty() {
             self.list_state.select(Some(self.filtered_indices.len() - 1));
             self.auto_tail = true;
         }
+    }
+
+    /// Hilfs-Navigation, die die Markierung nicht zurücksetzt.
+    fn move_up_keep_mark(&mut self) {
+        if self.filtered_indices.is_empty() {
+            return;
+        }
+        let selected = self.list_state.selected().unwrap_or(0);
+        self.list_state.select(Some(selected.saturating_sub(1)));
+        self.auto_tail = false;
+    }
+
+    fn move_down_keep_mark(&mut self) {
+        if self.filtered_indices.is_empty() {
+            return;
+        }
+        let selected = self.list_state.selected().unwrap_or(0);
+        let next = (selected + 1).min(self.filtered_indices.len() - 1);
+        self.list_state.select(Some(next));
+        self.auto_tail = next + 1 == self.filtered_indices.len();
+    }
+
+    /// Erweitert die Markierung nach oben (Shift+Up).
+    /// Setzt beim ersten Aufruf den Anker auf die aktuelle Selektion.
+    pub fn extend_mark_up(&mut self) {
+        if self.filtered_indices.is_empty() {
+            return;
+        }
+        if self.mark_anchor.is_none() {
+            if let Some(sel) = self.list_state.selected() {
+                self.mark_anchor = Some(sel);
+            }
+        }
+        self.move_up_keep_mark();
+    }
+
+    /// Erweitert die Markierung nach unten (Shift+Down).
+    pub fn extend_mark_down(&mut self) {
+        if self.filtered_indices.is_empty() {
+            return;
+        }
+        if self.mark_anchor.is_none() {
+            if let Some(sel) = self.list_state.selected() {
+                self.mark_anchor = Some(sel);
+            }
+        }
+        self.move_down_keep_mark();
+    }
+
+    /// Hebt eine bestehende Markierung auf. Liefert `true`, wenn vorher
+    /// eine Markierung aktiv war.
+    pub fn clear_mark(&mut self) -> bool {
+        self.mark_anchor.take().is_some()
+    }
+
+    /// Liefert den aktuellen Markierungsbereich (inklusive) als
+    /// (low, high) in `filtered_indices`-Koordinaten — wenn vorhanden.
+    pub fn marked_range(&self) -> Option<(usize, usize)> {
+        let anchor = self.mark_anchor?;
+        let cursor = self.list_state.selected()?;
+        let lo = anchor.min(cursor);
+        let hi = anchor.max(cursor);
+        Some((lo, hi))
+    }
+
+    /// True, solange eine Markierung gesetzt ist.
+    pub fn has_mark(&self) -> bool {
+        self.mark_anchor.is_some()
     }
 
     /// Kopiert den Inhalt der Detail-Ansicht des aktuell selektierten Eintrags
@@ -272,6 +340,31 @@ impl App {
                     }
                 }
                 self.set_status_message("Eintrag gelöscht");
+            }
+            Err(e) => {
+                self.set_status_message(&format!("Löschen fehlgeschlagen: {}", e));
+            }
+        }
+    }
+
+    /// Löscht alle aktuell markierten Einträge aus der Log-Datei.
+    pub fn delete_marked_entries(&mut self) {
+        let Some((lo, hi)) = self.marked_range() else {
+            self.set_status_message("Keine Markierung");
+            return;
+        };
+        let indices: Vec<usize> = self.filtered_indices[lo..=hi].to_vec();
+        let count = indices.len();
+        match self.rewrite_file_without_entries(&indices) {
+            Ok(()) => {
+                self.mark_anchor = None;
+                let new_len = self.filtered_indices.len();
+                if new_len == 0 {
+                    self.list_state.select(None);
+                } else {
+                    self.list_state.select(Some(lo.min(new_len - 1)));
+                }
+                self.set_status_message(&format!("{} markierte Einträge gelöscht", count));
             }
             Err(e) => {
                 self.set_status_message(&format!("Löschen fehlgeschlagen: {}", e));
@@ -712,10 +805,12 @@ fn render_list(f: &mut Frame, app: &mut App, area: Rect) {
         .max()
         .unwrap_or(7);
 
+    let marked_range = app.marked_range();
     let items: Vec<ListItem> = app
         .filtered_indices
         .iter()
-        .map(|&idx| {
+        .enumerate()
+        .map(|(pos, &idx)| {
             let entry = &app.entries[idx];
             let level_style = Style::default().fg(level_color(entry.level));
 
@@ -766,7 +861,14 @@ fn render_list(f: &mut Frame, app: &mut App, area: Rect) {
             }
 
             let mut item = ListItem::new(Line::from(spans));
-            if app.new_line_numbers.contains(&entry.line_number) {
+            let is_marked = matches!(marked_range, Some((lo, hi)) if pos >= lo && pos <= hi);
+            if is_marked {
+                item = item.style(
+                    Style::default()
+                        .bg(Color::Rgb(120, 70, 30))
+                        .add_modifier(Modifier::BOLD),
+                );
+            } else if app.new_line_numbers.contains(&entry.line_number) {
                 item = item.style(Style::default().bg(Color::Rgb(20, 90, 40)));
             }
             item
@@ -1137,6 +1239,7 @@ fn render_help(f: &mut Frame, area: Rect) {
         Line::from(Span::styled("Navigation:", Style::default().add_modifier(Modifier::BOLD))),
         Line::from("  ↑/k        Nach oben"),
         Line::from("  ↓/j        Nach unten"),
+        Line::from("  Shift+↑/↓  Zeilen markieren (zusammenhängend)"),
         Line::from("  PgUp       Seite hoch"),
         Line::from("  PgDown     Seite runter"),
         Line::from("  Home/g     Zum Anfang"),
@@ -1159,7 +1262,7 @@ fn render_help(f: &mut Frame, area: Rect) {
         Line::from(Span::styled("Allgemein:", Style::default().add_modifier(Modifier::BOLD))),
         Line::from("  t          Zeitkorrektur: dann +/− (Stunde) oder 0 (Reset)"),
         Line::from("  ?          Diese Hilfe"),
-        Line::from("  Backspace  Löschen: Zeile / Selektion / Datei"),
+        Line::from("  Backspace  Löschen: Zeile / Markierung / Selektion / Datei"),
         Line::from("  q/ESC      Beenden / Zurück"),
         Line::from(""),
         Line::from(Span::styled(
@@ -1231,6 +1334,7 @@ fn render_delete_menu(f: &mut Frame, app: &App, area: Rect) {
     let total = app.entries.len();
     let filtered = app.filtered_indices.len();
     let has_selection = app.list_state.selected().is_some();
+    let marked = app.marked_range().map(|(lo, hi)| hi - lo + 1);
 
     let mut lines = vec![
         Line::from(Span::styled(
@@ -1249,20 +1353,32 @@ fn render_delete_menu(f: &mut Frame, app: &App, area: Rect) {
         )));
     }
 
+    if let Some(n) = marked {
+        lines.push(Line::from(format!(
+            "  [2]  Markierte Zeilen löschen  ({} Einträge)",
+            n
+        )));
+    } else {
+        lines.push(Line::from(Span::styled(
+            "  [2]  Markierte Zeilen löschen  (keine Markierung)",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
     if filter_active {
         lines.push(Line::from(format!(
-            "  [2]  Aktuelle Selektion löschen  ({} Einträge)",
+            "  [3]  Aktuelle Selektion löschen  ({} Einträge)",
             filtered
         )));
     } else {
         lines.push(Line::from(Span::styled(
-            "  [2]  Aktuelle Selektion löschen  (kein Filter aktiv)",
+            "  [3]  Aktuelle Selektion löschen  (kein Filter aktiv)",
             Style::default().fg(Color::DarkGray),
         )));
     }
 
     lines.push(Line::from(format!(
-        "  [3]  Gesamte Log-Datei leeren  ({} Einträge)",
+        "  [4]  Gesamte Log-Datei leeren  ({} Einträge)",
         total
     )));
     lines.push(Line::from(""));
@@ -1594,12 +1710,18 @@ pub fn handle_input(app: &mut App) -> io::Result<()> {
                         app.view = AppView::List;
                     }
                     KeyCode::Char('2') => {
+                        if app.has_mark() {
+                            app.delete_marked_entries();
+                            app.view = AppView::List;
+                        }
+                    }
+                    KeyCode::Char('3') => {
                         if app.filter.is_active() {
                             app.delete_filtered_entries();
                             app.view = AppView::List;
                         }
                     }
-                    KeyCode::Char('3') => {
+                    KeyCode::Char('4') => {
                         app.view = AppView::ConfirmTruncate;
                     }
                     _ => {}
@@ -1726,12 +1848,46 @@ pub fn handle_input(app: &mut App) -> io::Result<()> {
             }
 
             // Listen-Ansicht
+            // Shift+Up/Down erweitern die Markierung; muss vor dem
+            // normalen Match laufen, damit das Modifier-Flag greift.
+            if key.modifiers.contains(KeyModifiers::SHIFT)
+                && matches!(key.code, KeyCode::Up | KeyCode::Down)
+            {
+                if key.code == KeyCode::Up {
+                    app.extend_mark_up();
+                } else {
+                    app.extend_mark_down();
+                }
+                return Ok(());
+            }
+
+            // Filter-Aktionen sind blockiert, solange eine Markierung aktiv ist.
+            let mark_blocks_filter = app.has_mark()
+                && matches!(
+                    key.code,
+                    KeyCode::Char('/')
+                        | KeyCode::Char('1')
+                        | KeyCode::Char('2')
+                        | KeyCode::Char('3')
+                        | KeyCode::Char('4')
+                        | KeyCode::Char('0')
+                        | KeyCode::Char('d')
+                        | KeyCode::Char('f')
+                        | KeyCode::Char('s')
+                );
+            if mark_blocks_filter {
+                app.set_status_message("Markierung aktiv — erst mit ESC aufheben");
+                return Ok(());
+            }
+
             match key.code {
                 KeyCode::Char('q') => {
                     app.should_quit = true;
                 }
                 KeyCode::Esc => {
-                    if app.filter.is_active() {
+                    if app.clear_mark() {
+                        // 1. Stufe: Markierung aufheben.
+                    } else if app.filter.is_active() {
                         app.clear_filter();
                     } else if !app.new_line_numbers.is_empty() {
                         app.new_line_numbers.clear();
@@ -2482,6 +2638,135 @@ mod tests {
         assert_eq!(app.entries.len(), 4);
 
         let _ = fs::remove_file(&path);
+    }
+
+    // -- Markierung (mark_anchor) -----------------------------------------
+
+    #[test]
+    fn extend_mark_down_anchors_on_current_selection() {
+        let mut app = make_app(5);
+        app.list_state.select(Some(1));
+        assert!(!app.has_mark());
+
+        app.extend_mark_down();
+
+        assert!(app.has_mark());
+        // Anker bleibt bei 1, Cursor wandert auf 2 → Range [1, 2]
+        assert_eq!(app.marked_range(), Some((1, 2)));
+        assert_eq!(app.list_state.selected(), Some(2));
+    }
+
+    #[test]
+    fn extend_mark_up_extends_range_upward() {
+        let mut app = make_app(5);
+        app.list_state.select(Some(3));
+
+        app.extend_mark_up();
+        app.extend_mark_up();
+
+        assert_eq!(app.marked_range(), Some((1, 3)));
+        assert_eq!(app.list_state.selected(), Some(1));
+    }
+
+    #[test]
+    fn plain_move_clears_mark() {
+        let mut app = make_app(5);
+        app.list_state.select(Some(2));
+        app.extend_mark_down();
+        assert!(app.has_mark());
+
+        app.move_up();
+
+        assert!(!app.has_mark());
+        assert!(app.marked_range().is_none());
+    }
+
+    #[test]
+    fn clear_mark_returns_true_when_mark_was_active() {
+        let mut app = make_app(3);
+        app.list_state.select(Some(0));
+        app.extend_mark_down();
+        assert!(app.clear_mark());
+        assert!(!app.clear_mark());
+    }
+
+    // -- delete_marked_entries --------------------------------------------
+
+    #[test]
+    fn delete_marked_entries_removes_contiguous_range_from_file() {
+        let path = unique_temp_path("delete_marked");
+        write_log_lines(&path, 5);
+        let mut app = load_app_from(&path);
+        // Markiere Einträge 2 und 3 (Position 1 und 2)
+        app.list_state.select(Some(1));
+        app.extend_mark_down(); // Range [1, 2]
+        assert_eq!(app.marked_range(), Some((1, 2)));
+
+        app.delete_marked_entries();
+
+        assert_eq!(app.entries.len(), 3);
+        let messages: Vec<&str> = app.entries.iter().map(|e| e.message.as_str()).collect();
+        assert_eq!(messages, vec!["Entry 1", "Entry 4", "Entry 5"]);
+        let on_disk = fs::read_to_string(&path).unwrap();
+        assert!(!on_disk.contains("Entry 2"));
+        assert!(!on_disk.contains("Entry 3"));
+        // Markierung wurde aufgehoben
+        assert!(!app.has_mark());
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn delete_marked_entries_works_when_marking_extends_upward() {
+        let path = unique_temp_path("delete_marked_up");
+        write_log_lines(&path, 4);
+        let mut app = load_app_from(&path);
+        app.list_state.select(Some(3));
+        app.extend_mark_up();
+        app.extend_mark_up(); // Range [1, 3]
+
+        app.delete_marked_entries();
+
+        assert_eq!(app.entries.len(), 1);
+        let on_disk = fs::read_to_string(&path).unwrap();
+        assert!(on_disk.contains("Entry 1"));
+        assert!(!on_disk.contains("Entry 2"));
+        assert!(!on_disk.contains("Entry 3"));
+        assert!(!on_disk.contains("Entry 4"));
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn delete_marked_entries_without_mark_only_sets_status() {
+        let path = unique_temp_path("delete_marked_none");
+        write_log_lines(&path, 3);
+        let mut app = load_app_from(&path);
+        let before = fs::read_to_string(&path).unwrap();
+
+        app.delete_marked_entries();
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
+        assert_eq!(app.entries.len(), 3);
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn extend_mark_survives_with_active_filter() {
+        // Markierung muss auch dann funktionieren, wenn ein Filter aktiv ist
+        let path = unique_temp_path("mark_with_filter");
+        write_log_lines(&path, 5);
+        let mut app = load_app_from(&path);
+        // Filter so setzen, dass alle Einträge weiterhin angezeigt werden
+        app.set_search_filter(Some("Entry".to_string()));
+        assert_eq!(app.filtered_indices.len(), 5);
+
+        app.list_state.select(Some(0));
+        app.extend_mark_down();
+        app.extend_mark_down();
+        assert_eq!(app.marked_range(), Some((0, 2)));
+        assert!(app.has_mark());
     }
 
     // -- Zeitkorrektur -----------------------------------------------------

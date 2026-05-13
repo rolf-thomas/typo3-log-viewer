@@ -58,7 +58,8 @@ fn print_usage() {
     eprintln!();
     eprintln!("Allgemein:");
     eprintln!("  t               Zeitkorrektur: dann + / − (je 1h) oder 0 (Reset)");
-    eprintln!("  Backspace       Löschen: Zeile / Selektion / ganze Datei");
+    eprintln!("  Shift+↑/↓       Zeilen markieren (zusammenhängend)");
+    eprintln!("  Backspace       Löschen: Zeile / Markierung / Selektion / ganze Datei");
     eprintln!("  ?               Hilfe (im TUI)");
     eprintln!("  q / ESC         Beenden");
 }
