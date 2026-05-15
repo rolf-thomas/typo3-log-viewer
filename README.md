@@ -61,6 +61,14 @@ Das Binary `typo3-log-viewer-*-linux-x86_64-musl.tar.gz` kann bei den meisten sh
 curl -L https://github.com/rolf-thomas/typo3-log-viewer/releases/download/v*/typo3-log-viewer-*-linux-x86_64-musl.tar.gz | tar -xz
 ```
 
+> **macOS Gatekeeper:** Das Binary ist nur ad-hoc signiert (nicht über einen Apple Developer Account notarisiert). Beim ersten Start blockiert macOS die Ausführung mit "kann nicht geöffnet werden, da der Entwickler nicht verifiziert werden kann". Einmalig das Quarantäne-Attribut entfernen:
+>
+> ```bash
+> xattr -d com.apple.quarantine /pfad/zu/typo3-log-viewer
+> ```
+>
+> Alternativ in den **Systemeinstellungen → Datenschutz & Sicherheit** auf **"Trotzdem öffnen"** klicken, nachdem die Warnung erschienen ist.
+
 ### Aus dem Quellcode bauen
 
 Voraussetzung: [Rust >= 1.75](https://rustup.rs/)
