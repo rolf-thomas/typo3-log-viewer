@@ -10,7 +10,9 @@ Interaktiver Terminal-Viewer für TYPO3-Logdateien. Schnelles Navigieren, Filter
 - **Detailansicht** mit vollständiger Nachricht, Request-ID, Component und Pretty-Print JSON
 - **Interaktive Dateiauswahl** bei Verzeichnis-Argument — zurück zur Auswahl per ESC
 - **Live-Reload** — erkennt Änderungen in der Logdatei automatisch (inkrementelles Tail-Reload, geringer Speicherverbrauch auch bei großen Dateien)
-- **Logdatei leeren** — direkt aus der Anwendung mit Backspace (mit Bestätigung)
+- **Lösch-Menü** — einzelne Zeile, markierten Bereich, gefilterte Selektion oder die gesamte Datei löschen (Backspace, mit Bestätigung)
+- **Mehrfach-Markierung** — zusammenhängende Zeilenbereiche mit Shift+↑/↓ markieren und gemeinsam löschen
+- **Zeitkorrektur** — Zeitstempel temporär um ganze Stunden verschieben (z. B. für UTC/Lokalzeit-Abgleich)
 - **Copy-to-Clipboard** — kompletten Eintrag aus der Detailansicht in die Zwischenablage kopieren
 - **Datumsfilter** — heute, letzter Monat, letzte 6/12 Monate oder eigener Bereich (TT.MM.JJJJ)
 - **Request-Fokus** — alle Log-Einträge einer Request-ID auf einen Blick
@@ -24,6 +26,8 @@ Interaktiver Terminal-Viewer für TYPO3-Logdateien. Schnelles Navigieren, Filter
 ![Listenansicht](assets/listview.jpg)
 
 ![Detailansicht](assets/details.jpg)
+
+![Teile der Logdatei löschen](assets/delete.jpg)
 
 ## Installation
 
@@ -92,6 +96,7 @@ Ohne Argument wird `./var/log/` verwendet, falls das Verzeichnis existiert.
 | Taste | Funktion |
 |-------|----------|
 | `↑` / `↓`, `j` / `k` | Navigation |
+| `Shift+↑` / `Shift+↓` | Zeilen markieren (zusammenhängender Bereich) |
 | `PgUp` / `PgDown` | Seitenweises Scrollen |
 | `Home` / `g` | Zum Anfang |
 | `End` / `G` | Zum Ende |
@@ -102,8 +107,9 @@ Ohne Argument wird `./var/log/` verwendet, falls das Verzeichnis existiert.
 | `/` | Volltextsuche |
 | `1`–`4` | Level-Filter (1=Error, 2=Warning, 3=Info, 4=Debug) |
 | `0` | Alle Filter zurücksetzen |
-| `ESC` | Filter zurücksetzen / zurück zur Dateiauswahl |
-| `Backspace` | Logdatei leeren (mit Bestätigung) |
+| `t` | Zeitkorrektur-Modus (danach `+` / `−` für ±1h, `0` für Reset) |
+| `ESC` | Markierung aufheben / Filter zurücksetzen / zurück zur Dateiauswahl |
+| `Backspace` | Lösch-Menü öffnen (Zeile / Markierung / Selektion / Datei) |
 | `?` | Hilfe |
 | `q` | Beenden |
 
@@ -118,6 +124,7 @@ Ohne Argument wird `./var/log/` verwendet, falls das Verzeichnis existiert.
 | `End` / `G` | Zum letzten Eintrag |
 | `e` | Exception-Block ein-/ausblenden |
 | `c` | Eintrag in die Zwischenablage kopieren (pbcopy / wl-copy / xclip / xsel / clip.exe) |
+| `t` | Zeitkorrektur-Modus (danach `+` / `−` für ±1h, `0` für Reset) |
 | `ESC`, `Enter`, `q` | Zurück zur Liste |
 
 ### Datumsfilter-Menü (`d`)
@@ -131,6 +138,18 @@ Ohne Argument wird `./var/log/` verwendet, falls das Verzeichnis existiert.
 | `5` | Eigenen Datumsbereich eingeben (TT.MM.JJJJ) |
 | `0` | Datumsfilter zurücksetzen |
 | `ESC` / `d` | Schließen |
+
+### Lösch-Menü (`Backspace`)
+
+Schreibt Änderungen direkt in die Logdatei zurück. Jede Aktion wird vorher bestätigt.
+
+| Taste | Funktion |
+|-------|----------|
+| `1` | Aktuell ausgewählte Zeile löschen |
+| `2` | Markierten Zeilenbereich löschen (vorher mit `Shift+↑/↓` markieren) |
+| `3` | Aktuelle gefilterte Selektion löschen (nur bei aktivem Filter) |
+| `4` | Gesamte Log-Datei leeren |
+| `ESC` | Abbrechen |
 
 ## Unterstütztes Log-Format
 
