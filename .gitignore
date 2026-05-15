@@ -1,7 +1,8 @@
 /.DS_Store
 /target
-/var
+/var/log/*
 !/var/log/.gitkeep
+!/var/log/typo3_testdata.log
 /dist
 /CLAUDE.md
 /.claude/
