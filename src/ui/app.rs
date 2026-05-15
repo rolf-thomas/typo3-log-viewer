@@ -102,6 +102,8 @@ pub struct App {
     /// Wird per Shift+Up/Down gesetzt; der zweite Endpunkt entspricht der
     /// aktuellen Selektion.
     mark_anchor: Option<usize>,
+    /// Geteilter Zustand des Update-Checks; wird in der Statusleiste gelesen.
+    pub update_state: Option<crate::updater::UpdateState>,
 }
 
 const STATUS_MESSAGE_TTL: Duration = Duration::from_secs(2);
@@ -137,6 +139,7 @@ impl App {
             timestamp_offset_hours: 0,
             time_adjust_mode: false,
             mark_anchor: None,
+            update_state: None,
         };
 
         // Wähle den letzten (neuesten) Eintrag
@@ -1518,14 +1521,41 @@ fn render_statusbar(f: &mut Frame, app: &App, area: Rect) {
         )
     };
 
-    let right = format!(" v{} ", version);
+    // Wenn ein Update verfügbar ist, wird die Versionsanzeige rechts in Gelb
+    // und mit einem Stern markiert.
+    let update_available = app
+        .update_state
+        .as_ref()
+        .and_then(crate::updater::current)
+        .is_some();
+
+    let right = if update_available {
+        format!(" v{} * ", version)
+    } else {
+        format!(" v{} ", version)
+    };
+
     let width = area.width as usize;
     let pad = width.saturating_sub(left.len() + right.len());
-    let status = format!("{}{}{}", left, " ".repeat(pad), right);
 
-    let statusbar = Paragraph::new(status)
-        .style(Style::default().bg(Color::DarkGray).fg(Color::White));
+    let bg = Style::default().bg(Color::DarkGray).fg(Color::White);
+    let line = Line::from(vec![
+        Span::styled(left, bg),
+        Span::styled(" ".repeat(pad), bg),
+        Span::styled(
+            right,
+            if update_available {
+                Style::default()
+                    .bg(Color::DarkGray)
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                bg
+            },
+        ),
+    ]);
 
+    let statusbar = Paragraph::new(line).style(bg);
     f.render_widget(statusbar, area);
 }
 

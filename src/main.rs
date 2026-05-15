@@ -3,6 +3,7 @@ mod loader;
 mod model;
 mod parser;
 mod ui;
+mod updater;
 
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind},
@@ -22,6 +23,7 @@ use std::io::{self, stdout};
 use std::path::{Path, PathBuf};
 use std::process;
 use ui::{run_app, App, AppExit};
+use updater::{InstallMethod, UpdateInfo, UpdateState};
 
 fn print_version() {
     println!("{}", env!("CARGO_PKG_VERSION"));
@@ -73,7 +75,11 @@ struct FileInfo {
 }
 
 /// Interaktive Dateiauswahl mit TUI
-fn select_file_interactive(files: &[PathBuf], preselect: Option<usize>) -> io::Result<Option<PathBuf>> {
+fn select_file_interactive(
+    files: &[PathBuf],
+    preselect: Option<usize>,
+    update_state: &UpdateState,
+) -> io::Result<Option<PathBuf>> {
     // Datei-Infos sammeln
     let file_infos: Vec<FileInfo> = files
         .iter()
@@ -113,7 +119,7 @@ fn select_file_interactive(files: &[PathBuf], preselect: Option<usize>) -> io::R
 
     loop {
         terminal.draw(|f| {
-            render_file_selector(f, &file_infos, &mut list_state);
+            render_file_selector(f, &file_infos, &mut list_state, update_state);
         })?;
 
         if event::poll(std::time::Duration::from_millis(100))? {
@@ -170,7 +176,12 @@ fn select_file_interactive(files: &[PathBuf], preselect: Option<usize>) -> io::R
 }
 
 /// Rendert die Dateiauswahl
-fn render_file_selector(f: &mut Frame, files: &[FileInfo], list_state: &mut ListState) {
+fn render_file_selector(
+    f: &mut Frame,
+    files: &[FileInfo],
+    list_state: &mut ListState,
+    update_state: &UpdateState,
+) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(1), Constraint::Length(1)])
@@ -206,14 +217,34 @@ fn render_file_selector(f: &mut Frame, files: &[FileInfo], list_state: &mut List
     f.render_stateful_widget(list, chunks[0], list_state);
 
     let left = " ↑↓/jk: Navigation | Enter: Auswählen | q/ESC: Abbrechen";
-    let right = format!(" v{} ", env!("CARGO_PKG_VERSION"));
+    let update_available = updater::current(update_state).is_some();
+    let right = if update_available {
+        format!(" v{} * ", env!("CARGO_PKG_VERSION"))
+    } else {
+        format!(" v{} ", env!("CARGO_PKG_VERSION"))
+    };
+
     let width = chunks[1].width as usize;
     let pad = width.saturating_sub(left.len() + right.len());
-    let help_text = format!("{}{}{}", left, " ".repeat(pad), right);
 
-    let help = Paragraph::new(help_text)
-        .style(Style::default().bg(Color::DarkGray).fg(Color::White));
+    let bg = Style::default().bg(Color::DarkGray).fg(Color::White);
+    let help_line = Line::from(vec![
+        Span::styled(left.to_string(), bg),
+        Span::styled(" ".repeat(pad), bg),
+        Span::styled(
+            right,
+            if update_available {
+                Style::default()
+                    .bg(Color::DarkGray)
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                bg
+            },
+        ),
+    ]);
 
+    let help = Paragraph::new(help_line).style(bg);
     f.render_widget(help, chunks[1]);
 }
 
@@ -230,6 +261,10 @@ fn install_panic_hook() {
 
 fn main() {
     install_panic_hook();
+
+    // Update-Check im Hintergrund starten — Ergebnis fließt in Statusleisten
+    // und in den Exit-Hinweis ein.
+    let (update_state, _update_handle) = updater::start_check();
 
     let args: Vec<String> = std::env::args().collect();
 
@@ -290,12 +325,15 @@ fn main() {
         let file_to_open = if files.len() == 1 {
             files[0].clone()
         } else {
-            match select_file_interactive(&files, last_selected_index) {
+            match select_file_interactive(&files, last_selected_index, &update_state) {
                 Ok(Some(f)) => {
                     last_selected_index = files.iter().position(|p| p == &f);
                     f
                 }
-                Ok(None) => process::exit(0),
+                Ok(None) => {
+                    print_update_notice(&update_state);
+                    process::exit(0);
+                }
                 Err(e) => {
                     eprintln!("Fehler bei der Dateiauswahl: {}", e);
                     process::exit(1);
@@ -312,7 +350,7 @@ fn main() {
             }
         };
 
-        match run_tui(result, has_file_selector) {
+        match run_tui(result, has_file_selector, update_state.clone()) {
             Ok(AppExit::Back) => continue,
             Ok(AppExit::Quit) => break,
             Err(e) => {
@@ -321,9 +359,52 @@ fn main() {
             }
         }
     }
+
+    print_update_notice(&update_state);
 }
 
-fn run_tui(result: loader::LoadResult, has_file_selector: bool) -> io::Result<AppExit> {
+/// Schreibt nach Beenden einen Hinweis in die Shell, wenn eine neuere Version
+/// verfügbar ist. Format und Inhalt hängen von der erkannten Installationsart ab.
+fn print_update_notice(state: &UpdateState) {
+    let Some(info) = updater::current(state) else {
+        return;
+    };
+    let UpdateInfo {
+        latest_version,
+        install_method,
+    } = info;
+    let current = env!("CARGO_PKG_VERSION");
+
+    // ANSI: gelb für Header, fett für Versionssprung.
+    let yellow = "\x1b[33m";
+    let bold = "\x1b[1m";
+    let dim = "\x1b[2m";
+    let reset = "\x1b[0m";
+
+    eprintln!();
+    eprintln!(
+        "{yellow}{bold}★ Update verfügbar:{reset} typo3-log-viewer {dim}v{current}{reset} → {bold}v{latest_version}{reset}"
+    );
+    match install_method {
+        InstallMethod::Homebrew => {
+            eprintln!("  Update via Homebrew:");
+            eprintln!("    {}", InstallMethod::Homebrew.update_command());
+        }
+        InstallMethod::Manual => {
+            eprintln!("  {}", InstallMethod::Manual.update_command());
+            eprintln!(
+                "  {dim}Auf macOS ggf. anschließend: xattr -d com.apple.quarantine typo3-log-viewer{reset}"
+            );
+        }
+    }
+    eprintln!();
+}
+
+fn run_tui(
+    result: loader::LoadResult,
+    has_file_selector: bool,
+    update_state: UpdateState,
+) -> io::Result<AppExit> {
     // Terminal setup
     enable_raw_mode()?;
     let mut stdout = stdout();
@@ -335,6 +416,7 @@ fn run_tui(result: loader::LoadResult, has_file_selector: bool) -> io::Result<Ap
     // App erstellen und ausführen
     let mut app = App::new(result);
     app.has_file_selector = has_file_selector;
+    app.update_state = Some(update_state);
     let res = run_app(&mut terminal, app);
 
     // Terminal cleanup
