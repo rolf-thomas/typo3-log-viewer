@@ -2,6 +2,10 @@
 
 Alle Änderungen an diesem Projekt sind in dieser Datei dokumentiert.
 
+## [0.12.1] – 2026-05-23
+
+- Versionsnummer im README-Abschnitt „Binary direkt herunterladen" (Dateinamen und curl-Befehl) wird beim Versions-Bump automatisch mitgepflegt.
+
 ## [0.12.0] – 2026-05-23
 
 - ESC im Listen-Modus führt zurück zur Datei-Auswahl, auch wenn die App mit einer einzelnen Logdatei als Argument gestartet wurde (Geschwisterdateien im selben Verzeichnis werden automatisch erkannt). Erst ESC in der Auswahl beendet das Programm.
