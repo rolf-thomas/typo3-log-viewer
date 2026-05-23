@@ -96,12 +96,37 @@ if command -v cargo >/dev/null 2>&1; then
   cargo update --workspace --package typo3-log-viewer >/dev/null 2>&1 || true
 fi
 
+# README.md: Versionsnummer im Abschnitt "Binary direkt herunterladen" auf
+# die neue Version setzen. Nur zwischen "### Binary direkt herunterladen"
+# und der nächsten "### "-Überschrift, damit andere Stellen unverändert
+# bleiben.
+README="README.md"
+if [ -f "$README" ]; then
+  tmp=$(mktemp -t typo3-log-viewer-readme.XXXXXX)
+  awk -v cur="$current" -v new="$new" '
+    BEGIN { in_section = 0 }
+    /^### / {
+      if (in_section) { in_section = 0 }
+      if ($0 ~ /^### Binary direkt herunterladen[[:space:]]*$/) { in_section = 1 }
+      print
+      next
+    }
+    {
+      if (in_section) {
+        gsub(cur, new)
+      }
+      print
+    }
+  ' "$README" > "$tmp" && mv "$tmp" "$README"
+  echo "README.md: Version aktualisiert ($current → $new)."
+fi
+
 echo "Version: $current → $new"
 echo ""
 echo "Nächste Schritte:"
 echo "  1. CHANGELOG.md: neuen Abschnitt '## [$new] – $(date +%Y-%m-%d)' ergänzen"
 echo "     (release-all.sh bricht ab, wenn der Eintrag fehlt)."
-echo "  2. git add Cargo.toml Cargo.lock CHANGELOG.md && git commit -m \"Bump version to $new\" && git push"
+echo "  2. git add Cargo.toml Cargo.lock CHANGELOG.md README.md && git commit -m \"Bump version to $new\" && git push"
 echo "  3. ./release-all.sh"
 echo ""
 echo "Hinweis für LLM-Assistenten:"
