@@ -62,6 +62,35 @@ if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
   fail "Release $TAG existiert bereits auf $REPO. Erst löschen oder Version bumpen."
 fi
 
+# --- CHANGELOG-Abschnitt für diese Version vorbereiten ---
+
+[ -f CHANGELOG.md ] || fail "CHANGELOG.md nicht gefunden — bitte vor Release anlegen."
+
+# Abschnitt für die aktuelle Version extrahieren: von "## [VERSION]" bis zur
+# nächsten "## "-Überschrift (exklusiv). awk ist hier einfacher als sed.
+CHANGELOG_SECTION=$(awk -v ver="$VERSION" '
+  BEGIN { in_section = 0 }
+  /^## \[/ {
+    if (in_section) { exit }
+    if ($0 ~ "^## \\[" ver "\\]") {
+      in_section = 1
+      print
+      next
+    }
+  }
+  { if (in_section) print }
+' CHANGELOG.md)
+
+if [ -z "$CHANGELOG_SECTION" ]; then
+  fail "Kein Eintrag '## [$VERSION]' in CHANGELOG.md gefunden. Bitte vor Release ergänzen (siehe bump-version.sh)."
+fi
+
+echo ""
+echo "--- CHANGELOG-Abschnitt für $TAG ---"
+echo "$CHANGELOG_SECTION"
+echo "--- Ende ---"
+echo ""
+
 # --- macOS arm64 Build (signiert) ---
 
 banner "macOS arm64 Build"
@@ -90,6 +119,11 @@ banner "Formel patchen"
 ./update-formula.sh
 
 git add Formula/typo3-log-viewer.rb
+# CHANGELOG.md mit aufnehmen, wenn er noch nicht committet ist — der Tag
+# soll auf einen Commit zeigen, der den Versionsabschnitt enthält.
+if ! git diff --quiet -- CHANGELOG.md || ! git diff --cached --quiet -- CHANGELOG.md; then
+  git add CHANGELOG.md
+fi
 git commit -m "Updates version to $VERSION in brew formula"
 git tag "$TAG"
 git push
@@ -98,10 +132,24 @@ git push origin "$TAG"
 # --- GitHub Release ---
 
 banner "GitHub Release anlegen"
+
+# Link auf das CHANGELOG im Stand des Release-Tags (nicht master), damit der
+# Verweis dauerhaft zur ausgelieferten Version passt.
+CHANGELOG_URL="https://github.com/$REPO/blob/$TAG/CHANGELOG.md"
+
+RELEASE_NOTES_FILE=$(mktemp -t typo3-log-viewer-release-notes.XXXXXX)
+trap 'rm -f "$RELEASE_NOTES_FILE"' EXIT
+
+{
+  echo "$CHANGELOG_SECTION"
+  echo ""
+  echo "Vollständiger Verlauf: [CHANGELOG.md]($CHANGELOG_URL)"
+} > "$RELEASE_NOTES_FILE"
+
 gh release create "$TAG" \
   --repo "$REPO" \
   --title "$TAG" \
-  --generate-notes \
+  --notes-file "$RELEASE_NOTES_FILE" \
   dist/*.tar.gz
 
 RELEASE_URL=$(gh release view "$TAG" --repo "$REPO" --json url -q .url)
