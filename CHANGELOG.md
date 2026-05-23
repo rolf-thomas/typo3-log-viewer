@@ -2,6 +2,11 @@
 
 Alle Änderungen an diesem Projekt sind in dieser Datei dokumentiert.
 
+## [0.12.0] – 2026-05-23
+
+- ESC im Listen-Modus führt zurück zur Datei-Auswahl, auch wenn die App mit einer einzelnen Logdatei als Argument gestartet wurde (Geschwisterdateien im selben Verzeichnis werden automatisch erkannt). Erst ESC in der Auswahl beendet das Programm.
+- Release-Workflow: `release-all.sh` setzt jetzt einen passenden Abschnitt in `CHANGELOG.md` voraus, übernimmt ihn in den Release-Commit und nutzt ihn als Body des GitHub-Releases (inkl. Link auf das CHANGELOG am Tag-Commit). `bump-version.sh` erinnert daran.
+
 ## [0.11.0] – 2026-05-15
 
 - Update-Prüfung im Hintergrund: Hinweis auf neue Version in den Statusleisten und beim Beenden inklusive Update-Befehl je nach Installationsart.
