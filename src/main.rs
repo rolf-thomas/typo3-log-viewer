@@ -299,31 +299,53 @@ fn main() {
         process::exit(1);
     }
 
-    // Dateien im Verzeichnis ermitteln (oder direkte Datei)
-    let (files, has_file_selector) = if path.is_dir() {
-        match find_log_files(path) {
-            Ok(files) if files.is_empty() => {
-                eprintln!("Keine .log-Dateien in '{}' gefunden.", path_arg);
-                process::exit(1);
+    // Dateien im Verzeichnis ermitteln (oder direkte Datei +
+    // Geschwisterdateien im selben Verzeichnis, damit ESC zur Auswahl führt).
+    let (files, has_file_selector, mut skip_selector_once, mut last_selected_index) =
+        if path.is_dir() {
+            match find_log_files(path) {
+                Ok(files) if files.is_empty() => {
+                    eprintln!("Keine .log-Dateien in '{}' gefunden.", path_arg);
+                    process::exit(1);
+                }
+                Ok(files) => {
+                    let has_selector = files.len() > 1;
+                    (files, has_selector, false, None)
+                }
+                Err(e) => {
+                    eprintln!("Fehler beim Lesen des Verzeichnisses: {}", e);
+                    process::exit(1);
+                }
             }
-            Ok(files) => {
-                let has_selector = files.len() > 1;
-                (files, has_selector)
+        } else {
+            // Einzelne Datei übergeben — Geschwisterdateien im Verzeichnis suchen,
+            // damit ESC zur Übersicht zurückführt statt direkt zu beenden.
+            let parent = path.parent().filter(|p| !p.as_os_str().is_empty());
+            let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+
+            match parent.and_then(|p| find_log_files(p).ok()) {
+                Some(siblings) if siblings.len() > 1 => {
+                    let preselect = siblings.iter().position(|p| {
+                        p.canonicalize().unwrap_or_else(|_| p.clone()) == canonical_path
+                    });
+                    (siblings, true, true, preselect)
+                }
+                _ => (vec![path.to_path_buf()], false, false, None),
             }
-            Err(e) => {
-                eprintln!("Fehler beim Lesen des Verzeichnisses: {}", e);
-                process::exit(1);
-            }
-        }
-    } else {
-        (vec![path.to_path_buf()], false)
-    };
+        };
 
     // Hauptschleife: Dateiauswahl → Viewer → ggf. zurück zur Auswahl
-    let mut last_selected_index: Option<usize> = None;
     loop {
         let file_to_open = if files.len() == 1 {
             files[0].clone()
+        } else if skip_selector_once {
+            // Beim ersten Durchlauf direkt die übergebene Datei öffnen,
+            // ohne die Auswahl anzuzeigen.
+            skip_selector_once = false;
+            match last_selected_index.and_then(|i| files.get(i)) {
+                Some(f) => f.clone(),
+                None => files[0].clone(),
+            }
         } else {
             match select_file_interactive(&files, last_selected_index, &update_state) {
                 Ok(Some(f)) => {
