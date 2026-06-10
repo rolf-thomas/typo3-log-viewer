@@ -50,15 +50,15 @@ Fertige Binaries für alle Plattformen unter [Releases](https://github.com/rolf-
 
 | Datei | Plattform |
 |-------|-----------|
-| `typo3-log-viewer-0.12.1-macos-arm64.tar.gz` | macOS Apple Silicon |
-| `typo3-log-viewer-0.12.1-macos-x86_64.tar.gz` | macOS Intel |
-| `typo3-log-viewer-0.12.1-linux-x86_64-musl.tar.gz` | Linux x86_64 (statisch, max. Portabilität) |
-| `typo3-log-viewer-0.12.1-linux-arm64.tar.gz` | Linux ARM64 |
+| `typo3-log-viewer-0.13.0-macos-arm64.tar.gz` | macOS Apple Silicon |
+| `typo3-log-viewer-0.13.0-macos-x86_64.tar.gz` | macOS Intel |
+| `typo3-log-viewer-0.13.0-linux-x86_64-musl.tar.gz` | Linux x86_64 (statisch, max. Portabilität) |
+| `typo3-log-viewer-0.13.0-linux-arm64.tar.gz` | Linux ARM64 |
 
-Das Binary `typo3-log-viewer-0.12.1-linux-x86_64-musl.tar.gz` kann bei den meisten shared Hosting Anbietern in `~/.local/bin` plaziert von überall aufgerufen werden.
+Das Binary `typo3-log-viewer-0.13.0-linux-x86_64-musl.tar.gz` kann bei den meisten shared Hosting Anbietern in `~/.local/bin` plaziert von überall aufgerufen werden.
 
 ```bash
-curl -L https://github.com/rolf-thomas/typo3-log-viewer/releases/download/v0.12.1/typo3-log-viewer-0.12.1-linux-x86_64-musl.tar.gz | tar -xz
+curl -L https://github.com/rolf-thomas/typo3-log-viewer/releases/download/v0.13.0/typo3-log-viewer-0.13.0-linux-x86_64-musl.tar.gz | tar -xz
 ```
 
 > **macOS Gatekeeper:** Das Binary ist nur ad-hoc signiert (nicht über einen Apple Developer Account notarisiert). Beim ersten Start blockiert macOS die Ausführung mit "kann nicht geöffnet werden, da der Entwickler nicht verifiziert werden kann". Einmalig das Quarantäne-Attribut entfernen:

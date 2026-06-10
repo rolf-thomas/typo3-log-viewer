@@ -2,6 +2,10 @@
 
 Alle Änderungen an diesem Projekt sind in dieser Datei dokumentiert.
 
+## [0.13.0] – 2026-06-10
+
+- Markierung von in den letzten 24 Stunden geänderten Dateien im Dateibrowser
+
 ## [0.12.1] – 2026-05-23
 
 - Versionsnummer im README-Abschnitt „Binary direkt herunterladen" (Dateinamen und curl-Befehl) wird beim Versions-Bump automatisch mitgepflegt.
