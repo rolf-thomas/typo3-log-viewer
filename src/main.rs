@@ -10,7 +10,7 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use loader::{find_log_files, format_file_size, load_log_file};
+use loader::{find_log_files, format_file_size, is_log_file_recent, load_log_file};
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
@@ -72,6 +72,8 @@ struct FileInfo {
     name: String,
     size: String,
     is_empty: bool,
+    /// Letzte Zeile ist ein gültiger Log-Eintrag innerhalb der letzten 24h
+    is_recent: bool,
 }
 
 /// Interaktive Dateiauswahl mit TUI
@@ -95,11 +97,13 @@ fn select_file_interactive(
                 .map(format_file_size)
                 .unwrap_or_else(|| "?".to_string());
             let is_empty = bytes == Some(0);
+            let is_recent = !is_empty && is_log_file_recent(path);
             FileInfo {
                 path: path.clone(),
                 name,
                 size,
                 is_empty,
+                is_recent,
             }
         })
         .collect();
@@ -190,11 +194,24 @@ fn render_file_selector(
     let items: Vec<ListItem> = files
         .iter()
         .map(|file| {
-            let line = Line::from(vec![
-                Span::styled(&file.name, Style::default().fg(Color::White)),
-                Span::raw("  "),
-                Span::styled(format!("({})", file.size), Style::default().fg(Color::DarkGray)),
-            ]);
+            // Aktuelle Dateien (letzte Zeile = Log-Eintrag innerhalb 24h) grün,
+            // sonst weiß.
+            let name_color = if file.is_recent {
+                Color::Green
+            } else {
+                Color::White
+            };
+            let mut spans = vec![];
+            spans.push(Span::styled(&file.name, Style::default().fg(name_color)));
+            if file.is_recent {
+                spans.push(Span::styled(
+                    " *",
+                    Style::default().fg(Color::Green),
+                ));
+            }
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(format!("({})", file.size), Style::default().fg(Color::DarkGray)));
+            let line = Line::from(spans);
             ListItem::new(line)
         })
         .collect();
@@ -203,13 +220,14 @@ fn render_file_selector(
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(format!(" Log-Datei auswählen ({} Dateien) ", files.len()))
+                .title(format!(" Log-Datei auswählen ({} Dateien, * = heute geändert) ", files.len()))
                 .border_style(Style::default().fg(Color::Cyan)),
         )
         .highlight_style(
+            // Keine feste fg-Farbe: so bleibt die Zeilenfarbe (grün für aktuelle
+            // Dateien, sonst weiß) auch bei Hervorhebung erhalten.
             Style::default()
                 .bg(Color::Rgb(50, 70, 110))
-                .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("> ");
